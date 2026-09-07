@@ -1,0 +1,162 @@
+<script setup>
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Blocks, Layers, History, Code, Search, Plus, Play, Pause, Square, StepForward, ChevronLeft, ChevronRight, Save, RotateCcw, Download, X, CircleHelp, Terminal, SlidersHorizontal, Eye, Check, ArrowLeft, FileText } from '@lucide/vue'
+import GraphCanvas from './GraphCanvas.vue'
+import { workflow, eventNode } from './graph.js'
+
+const config = ref(null), baseline = ref(''), revision = ref(''), configPath = ref(''), keyStatus = ref('empty')
+const source = ref(''), savedSource = ref(''), key = ref(''), keyAction = ref('keep')
+const selected = ref('agent'), panel = ref('components'), rightTab = ref('properties'), bottomTab = ref('events')
+const task = ref(''), search = ref(''), graph = ref(null), runs = ref([]), run = ref(null), activeId = ref(null), eventIndex = ref(-1), followLive = ref(true)
+const error = ref(''), notice = ref(''), busy = ref(false), menu = ref(''), help = ref(false)
+const sidebar = ref(window.innerWidth >= 1250), inspectorOpen = ref(window.innerWidth >= 1000), timeline = ref(true)
+const compact = ref(window.innerWidth < 1250), narrow = ref(window.innerWidth < 1000)
+const layers = ref({ config: true, action: true, observation: true })
+const token = document.querySelector('meta[name="nreact-token"]')?.content
+const dirty = computed(() => !!config.value && (JSON.stringify(config.value) !== baseline.value || keyAction.value !== 'keep'))
+const sourceDirty = computed(() => source.value !== savedSource.value)
+const displayed = computed(() => run.value?.config || config.value)
+const readOnly = computed(() => !!run.value)
+const visibleTask = computed({ get: () => run.value?.task || task.value, set: value => { if (!run.value) task.value = value } })
+const events = computed(() => run.value?.events || [])
+const currentEvent = computed(() => events.value[eventIndex.value] || null)
+const isActive = computed(() => run.value && run.value.id === activeId.value)
+const canRun = computed(() => config.value && !busy.value && !activeId.value && !dirty.value && !sourceDirty.value && revision.value !== 'missing' && config.value.model.name.trim() && task.value.trim())
+const graphNodes = computed(() => displayed.value ? workflow(displayed.value).nodes : [])
+const selectedTitle = computed(() => graphNodes.value.find(node => node.id === selected.value)?.data.title || 'Properties')
+const status = computed(() => run.value?.status || (dirty.value || sourceDirty.value ? 'Unsaved changes' : revision.value === 'missing' ? 'New configuration' : 'Ready'))
+const groups = [
+  { title: 'Core', items: [{ id: 'task', name: 'Task input', detail: 'The question or instruction', icon: FileText }, { id: 'model', name: 'Chat model', detail: 'OpenAI-compatible endpoint', icon: Blocks }, { id: 'agent', name: 'ReAct agent', detail: 'Reason · act · observe', icon: SlidersHorizontal }] },
+  { title: 'Tools', items: [{ id: 'wikipedia', name: 'Wikipedia', detail: 'Search and look up pages', icon: Search }, { id: 'workspace', name: 'Workspace', detail: 'Read files and list directories', icon: FileText }, { id: 'custom', name: 'Python function', detail: 'Register a module:function', icon: Code }] },
+  { title: 'Outputs', items: [{ id: 'observation', name: 'Observation', detail: 'Tool output returned to context', icon: Eye }, { id: 'answer', name: 'Answer', detail: 'Final response from Finish', icon: Check }] },
+]
+const filteredGroups = computed(() => groups.map(group => ({ ...group, items: group.items.filter(item => `${item.name} ${item.detail}`.toLowerCase().includes(search.value.toLowerCase())) })).filter(group => group.items.length))
+async function api(path, payload) {
+  const response = await fetch(`/api/${path}`, { headers: { 'X-Nreact-Token': token, ...(payload ? { 'Content-Type': 'application/json' } : {}) }, ...(payload ? { method: 'POST', body: JSON.stringify(payload) } : {}) })
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`)
+  return data
+}
+function applyConfig(data) { config.value = data.config; baseline.value = JSON.stringify(data.config); revision.value = data.revision; configPath.value = data.path; source.value = savedSource.value = data.toml; keyStatus.value = data.key_status; key.value = ''; keyAction.value = 'keep' }
+async function guarded(action) { busy.value = true; error.value = ''; try { await action() } catch (reason) { error.value = reason.message } finally { busy.value = false; menu.value = '' } }
+async function reload() { if ((dirty.value || sourceDirty.value) && !window.confirm('Discard unsaved configuration changes?')) return; await guarded(async () => { applyConfig(await api('config')); notice.value = 'Configuration reloaded' }) }
+async function save() { await guarded(async () => {
+  if (sourceDirty.value && dirty.value) throw new Error('Both properties and TOML have changes. Save one editor at a time; reload to discard both drafts.')
+  const payload = sourceDirty.value ? { toml: source.value, revision: revision.value } : { config: { ...config.value, model: { ...config.value.model, ...(keyAction.value === 'replace' ? { api_key: key.value } : {}) } }, revision: revision.value, api_key_action: keyAction.value }
+  applyConfig(await api('config', payload)); notice.value = 'Saved to nreact.toml'
+}) }
+function selectNode(id) { selected.value = id; rightTab.value = 'properties'; inspectorOpen.value = true; if (compact.value) sidebar.value = false }
+function togglePanel(id) { sidebar.value = panel.value === id ? !sidebar.value : true; panel.value = id; if (narrow.value && sidebar.value) inspectorOpen.value = false }
+function showSource() { rightTab.value = 'source'; inspectorOpen.value = true; if (compact.value) sidebar.value = false }
+function resizeWorkspace() { const nextCompact = window.innerWidth < 1250, nextNarrow = window.innerWidth < 1000; if (nextCompact !== compact.value) sidebar.value = !nextCompact; if (nextNarrow !== narrow.value) inspectorOpen.value = !nextNarrow; compact.value = nextCompact; narrow.value = nextNarrow }
+function chooseComponent(id) {
+  if (['wikipedia', 'workspace', 'custom'].includes(id)) {
+    selectNode('tools')
+    if (readOnly.value || sourceDirty.value) return
+    if (id === 'wikipedia') config.value.tools.wikipedia = true
+    if (id === 'workspace' && !config.value.tools.workspace) config.value.tools.workspace = '.'
+    if (id === 'custom') config.value.tools.custom.push({ name: `tool${config.value.tools.custom.length + 1}`, description: '', callable: '' })
+  } else selectNode(id)
+}
+async function refreshRuns() { const data = await api('runs'); runs.value = data.runs; activeId.value = data.active }
+async function openRun(id) { await guarded(async () => { run.value = await api(`run?id=${id}`); eventIndex.value = run.value.events.length - 1; followLive.value = id === activeId.value; rightTab.value = 'event'; if (compact.value) sidebar.value = false; if (currentEvent.value) selected.value = eventNode(currentEvent.value) }) }
+function workingCopy() { run.value = null; eventIndex.value = -1; rightTab.value = 'properties'; selected.value = 'agent' }
+async function start(demo = false, singleStep = false) { await guarded(async () => { const data = await api('run', { task: task.value, revision: revision.value, demo, single_step: singleStep }); activeId.value = data.id; run.value = await api(`run?id=${data.id}`); eventIndex.value = run.value.events.length - 1; followLive.value = true; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false; await refreshRuns() }) }
+async function control(action) { await guarded(async () => { await api('run/control', { id: run.value.id, action }); run.value = await api(`run?id=${run.value.id}`); followLive.value = true }) }
+function selectEvent(index) { eventIndex.value = index; followLive.value = false; selected.value = eventNode(currentEvent.value) || 'agent'; rightTab.value = 'event'; inspectorOpen.value = true; if (compact.value) sidebar.value = false }
+function navigateEvent(delta) { selectEvent(Math.max(0, Math.min(events.value.length - 1, eventIndex.value + delta))) }
+function download(value, name, type) { const url = URL.createObjectURL(new Blob([value], { type })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); menu.value = '' }
+function exportRun() { if (run.value) download(JSON.stringify(run.value, null, 2), `run-${run.value.id}.json`, 'application/json') }
+function keydown(event) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if (!busy.value && !readOnly.value) save(); return }
+  if (event.target.closest('input,textarea,select,[contenteditable]')) return
+  if (event.key.toLowerCase() === 'f') graph.value?.fit()
+  if (event.key === 'ArrowLeft' && events.value.length) { event.preventDefault(); navigateEvent(-1) }
+  if (event.key === 'ArrowRight' && events.value.length) { event.preventDefault(); navigateEvent(1) }
+  if (event.key === 'Escape') { menu.value = ''; help.value = false }
+}
+function beforeUnload(event) { if (dirty.value || sourceDirty.value) { event.preventDefault(); event.returnValue = '' } }
+let poller, polling = false
+onMounted(async () => {
+  await guarded(async () => { applyConfig(await api('config')); await refreshRuns(); if (activeId.value) { run.value = await api(`run?id=${activeId.value}`); eventIndex.value = run.value.events.length - 1 } })
+  window.addEventListener('keydown', keydown); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('resize', resizeWorkspace)
+  poller = setInterval(async () => { if (polling || busy.value) return; polling = true; try {
+    if (activeId.value) {
+      const id = activeId.value; const data = await api(`run?id=${id}`)
+      if (run.value?.id === id) { run.value = data; if (followLive.value) { eventIndex.value = data.events.length - 1; selected.value = eventNode(currentEvent.value) || selected.value } }
+      await refreshRuns()
+    }
+  } catch (reason) { error.value = reason.message } finally { polling = false } }, 400)
+})
+onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown', keydown); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('resize', resizeWorkspace) })
+</script>
+
+<template>
+  <div class="workbench" @click="menu = ''">
+    <header class="menubar">
+      <nav class="menus" aria-label="Application menu">
+        <div v-for="name in ['File', 'View', 'Run', 'Help']" :key="name" class="menu-wrap"><button :class="{ active: menu === name }" @click.stop="menu = menu === name ? '' : name">{{ name }}</button>
+          <div v-if="menu === name" class="dropdown" @click.stop>
+            <template v-if="name === 'File'"><button :disabled="readOnly || busy" @click="save"><Save :size="14" /> Save configuration <kbd>Ctrl S</kbd></button><button :disabled="busy" @click="reload"><RotateCcw :size="14" /> Reload from disk</button><button @click="download(savedSource, 'nreact.toml', 'text/plain')"><Download :size="14" /> Export saved TOML</button><button :disabled="!run" @click="exportRun"><Download :size="14" /> Export selected run</button></template>
+            <template v-if="name === 'View'"><button @click="sidebar = !sidebar; menu = ''">Toggle component panel</button><button @click="timeline = !timeline; menu = ''">Toggle event timeline</button><button @click="graph?.fit(); menu = ''">Fit graph <kbd>F</kbd></button><button @click="graph?.reset(); menu = ''">Reset node positions</button><button @click="showSource(); menu = ''">Open TOML editor</button></template>
+            <template v-if="name === 'Run'"><button :disabled="!canRun" @click="start()">Run saved configuration</button><button :disabled="!!activeId || busy" @click="start(true, true)">Step through offline demo</button><button :disabled="!!activeId || busy" @click="start(true)">Run offline demo</button></template>
+            <template v-if="name === 'Help'"><button @click="help = true; menu = ''">Workbench guide</button><a href="https://github.com/nya-a-cat/nreact/blob/main/docs/configuration.md" target="_blank" rel="noreferrer">Configuration documentation ↗</a></template>
+          </div>
+        </div>
+      </nav>
+      <button class="document-tab" :title="configPath" @click="workingCopy"><FileText :size="14" /> nreact.toml <span class="unsaved">{{ dirty || sourceDirty ? '●' : '' }}</span></button>
+      <div class="top-actions"><button aria-label="Save configuration" title="Save configuration (Ctrl S)" :disabled="readOnly || busy || (!dirty && !sourceDirty && revision !== 'missing')" @click="save"><Save :size="14" /><span>Save</span></button><span class="separator"></span>
+        <button class="primary" :disabled="isActive ? busy || run.status !== 'paused' : !canRun" @click="isActive ? control('resume') : start()"><Play :size="13" />{{ isActive && run.status === 'paused' ? 'Resume' : 'Run' }}</button>
+        <button aria-label="Pause" title="Pause after the current turn" :disabled="!isActive || busy || run.status !== 'running'" @click="control('pause')"><Pause :size="14" /><span>Pause</span></button>
+        <button :disabled="isActive ? busy || run.status !== 'paused' : !canRun" title="Execute one complete ReAct turn" @click="isActive ? control('step') : start(false, true)"><StepForward :size="15" />Step</button>
+        <button aria-label="Stop" title="Stop execution" :disabled="!isActive || busy || run.status === 'cancelling'" @click="control('cancel')"><Square :size="12" /><span>Stop</span></button>
+      </div>
+    </header>
+    <div v-if="error" class="message error" role="alert">{{ error }}<button aria-label="Dismiss error" @click="error = ''"><X :size="15" /></button></div>
+    <main v-if="config" class="workspace" :class="{ 'sidebar-hidden': !sidebar, 'timeline-hidden': !timeline, 'inspector-hidden': !inspectorOpen }">
+      <aside class="icon-rail" aria-label="Workspace panels"><button v-for="item in [{ id: 'components', icon: Blocks, label: 'Components' }, { id: 'layers', icon: Layers, label: 'Layers' }, { id: 'history', icon: History, label: 'Run history' }]" :key="item.id" :class="{ active: sidebar && panel === item.id }" :title="item.label" :aria-label="item.label" @click="togglePanel(item.id)"><component :is="item.icon" :size="18" /></button><button title="TOML source" aria-label="TOML source" :class="{ active: rightTab === 'source' }" @click="showSource"><Code :size="18" /></button><button title="Toggle inspector" aria-label="Toggle inspector" :class="{ active: inspectorOpen }" @click="inspectorOpen = !inspectorOpen; if (narrow) sidebar = false"><SlidersHorizontal :size="18" /></button><div class="rail-spacer"></div><button title="Workbench guide" aria-label="Workbench guide" @click="help = true"><CircleHelp :size="18" /></button></aside>
+      <aside v-if="sidebar" class="library">
+        <header class="panel-heading"><span>{{ panel === 'components' ? 'Components' : panel === 'layers' ? 'Graph layers' : 'Run history' }}</span><button aria-label="Hide side panel" @click="sidebar = false"><X :size="13" /></button></header>
+        <template v-if="panel === 'components'">
+          <div class="search-field"><Search :size="14" /><input v-model="search" aria-label="Search components" placeholder="Search components…" /></div>
+          <div class="library-groups"><section v-for="group in filteredGroups" :key="group.title"><h2>{{ group.title }}</h2><button v-for="item in group.items" :key="item.id" class="component-item" :class="{ chosen: selected === item.id }" @click="chooseComponent(item.id)"><component :is="item.icon" :size="16" /><span><strong>{{ item.name }}</strong><small>{{ item.detail }}</small></span><Plus v-if="group.title === 'Tools'" :size="12" /></button></section><p v-if="!filteredGroups.length" class="muted pad">No matching components.</p></div>
+          <div class="library-footer"><span class="eyebrow">LOCAL WORKSPACE</span><p>Connect a model, configure tools, then follow each turn.</p><button class="outline" :disabled="!!activeId || busy" @click="start(true, true)"><StepForward :size="14" /> Try offline demo</button><small>Scripted model · fictional pages</small></div>
+        </template>
+        <template v-if="panel === 'layers'"><p class="muted pad">Show connections by their role in the agent loop.</p><label v-for="(_, name) in layers" :key="name" class="layer-switch"><input v-model="layers[name]" type="checkbox" /><i :class="name"></i>{{ name === 'config' ? 'Configuration' : name === 'action' ? 'Action / finish' : 'Observation return' }}</label><div class="pad"><button class="outline" @click="graph?.reset()"><RotateCcw :size="14" /> Reset layout</button></div></template>
+        <template v-if="panel === 'history'"><div class="history-actions"><button class="outline" @click="workingCopy"><ArrowLeft :size="13" /> Working copy</button><button title="Refresh history" aria-label="Refresh history" @click="guarded(refreshRuns)"><RotateCcw :size="14" /></button></div><div class="run-list"><button v-for="item in runs" :key="item.id" :class="{ chosen: run?.id === item.id }" @click="openRun(item.id)"><span class="run-list-title">{{ item.demo ? 'Offline demo' : item.model }}</span><p>{{ item.task }}</p><small>{{ item.status }} · {{ item.steps }} turns</small><time>{{ new Date(item.started_at).toLocaleString() }}</time></button><p v-if="!runs.length" class="muted pad">Runs appear here after execution. Completed traces remain available after restarting.</p></div></template>
+      </aside>
+      <section class="center-pane">
+        <div class="workspace-tabs"><button class="active"><Blocks :size="13" /> {{ run ? (run.demo ? 'Offline demo' : 'Run snapshot') : 'Agent graph' }}</button><span v-if="run" class="snapshot-label">{{ run.id.slice(0, 8) }} · read only</span><button v-if="run" class="return-link" @click="workingCopy"><ArrowLeft :size="12" /> Working copy</button><span v-else class="snapshot-label">Configuration view</span></div>
+        <GraphCanvas ref="graph" :config="displayed" :task="run?.task || task" :answer="run?.result?.answer || ''" :event="currentEvent" :selected="selected" :layers="layers" :storage-key="configPath" @select="selectNode" />
+        <section v-if="timeline" class="trace-panel">
+          <header class="trace-heading"><div class="trace-tabs"><button :class="{ active: bottomTab === 'events' }" @click="bottomTab = 'events'"><History :size="13" /> Events <span>{{ events.length }}</span></button><button :class="{ active: bottomTab === 'result' }" @click="bottomTab = 'result'"><Terminal :size="13" /> Result</button></div><div class="trace-nav"><button :disabled="eventIndex <= 0" aria-label="Previous event" title="Previous recorded event (←)" @click="navigateEvent(-1)"><ChevronLeft :size="16" /></button><span>{{ events.length ? eventIndex + 1 : 0 }} / {{ events.length }}</span><button :disabled="eventIndex >= events.length - 1" aria-label="Next event" title="Next recorded event (→)" @click="navigateEvent(1)"><ChevronRight :size="16" /></button><button :class="{ active: followLive && isActive }" :disabled="!events.length" @click="followLive = true; eventIndex = events.length - 1; selected = eventNode(currentEvent); rightTab = 'event'">Latest</button><button :disabled="!run" title="Export run JSON" aria-label="Export run" @click="exportRun"><Download :size="14" /></button></div></header>
+          <div v-if="!run" class="trace-empty"><Terminal :size="23" /><div><strong>Ready to inspect a run</strong><p>Enter a task in the inspector, or step through the offline demo.</p></div><button :disabled="!!activeId || busy" @click="start(true, true)">Open demo <StepForward :size="14" /></button></div>
+          <div v-else-if="bottomTab === 'events'" class="event-list"><div class="event-columns"><span>TURN</span><span>EVENT</span><span>CONTENT</span><span>ELAPSED</span></div><button v-for="(event, index) in events" :key="index" :class="{ chosen: eventIndex === index }" @click="selectEvent(index)"><span class="mono">{{ String(event.step).padStart(2, '0') }}</span><span class="event-kind" :class="event.kind">{{ event.kind === 'observation' ? 'observation' : event.tool || event.kind }}</span><span class="event-text">{{ event.text }}</span><span class="mono muted">{{ event.elapsed_seconds.toFixed(3) }}s</span></button><p v-if="!events.length" class="muted pad">Waiting for the first model response…</p></div>
+          <div v-else class="result-output"><p v-if="run.error" class="error-text">{{ run.error }}</p><pre>{{ run.result?.answer || (isActive ? 'Execution in progress…' : 'This run ended without a final answer.') }}</pre><div v-if="run.result" class="result-stats">{{ run.result.model_calls }} model calls · {{ run.result.steps }} turns · {{ run.elapsed_seconds.toFixed(3) }}s <span v-if="Object.keys(run.result.usage).length">· {{ JSON.stringify(run.result.usage) }}</span></div><p v-if="run.storage_error" class="error-text">{{ run.storage_error }}</p></div>
+        </section>
+      </section>
+      <div v-if="(compact && sidebar) || (narrow && inspectorOpen)" class="panel-backdrop" @click="sidebar = false; if (narrow) inspectorOpen = false"></div><aside v-if="inspectorOpen" class="inspector">
+        <section class="outliner"><header class="panel-heading">Graph outliner <span>{{ graphNodes.length }}</span></header><button v-for="(node, index) in graphNodes" :key="node.id" :class="{ chosen: selected === node.id }" @click="selectNode(node.id)"><span class="mono">{{ String(index + 1).padStart(2, '0') }}</span><span>{{ node.data.title }}</span><Eye v-if="selected === node.id" :size="13" /></button></section>
+        <header class="inspector-tabs"><button :class="{ active: rightTab === 'properties' }" @click="rightTab = 'properties'">Inspector</button><button :class="{ active: rightTab === 'event' }" @click="rightTab = 'event'">Event</button><button :class="{ active: rightTab === 'source' }" @click="rightTab = 'source'">TOML</button><button class="close-inspector" title="Close inspector" aria-label="Close inspector" @click="inspectorOpen = false"><X :size="14" /></button></header>
+        <div v-if="rightTab === 'properties'" class="properties">
+          <div v-if="readOnly" class="read-only">Saved run configuration <button @click="workingCopy">Edit working copy ↗</button></div>
+          <div v-else-if="sourceDirty" class="read-only">Save or reload the TOML draft to edit properties.</div>
+          <h2 class="property-title">{{ selectedTitle }}</h2>
+          <fieldset :disabled="readOnly || sourceDirty || busy">
+            <template v-if="selected === 'task'"><label class="stacked">Task<textarea v-model="visibleTask" rows="7" placeholder="What should the agent do?" maxlength="16000"></textarea></label><p class="field-help">The task starts a new run using your saved model and tool settings.</p><button class="primary full" :disabled="!canRun" @click="start()"><Play :size="13" /> Run task</button></template>
+            <template v-if="selected === 'model'"><label class="stacked">Model name<input v-model="displayed.model.name" placeholder="e.g. local-model" /></label><label class="stacked">Base URL<input v-model="displayed.model.base_url" placeholder="http://127.0.0.1:8080/v1" /></label><label>Temperature<input v-model.number="displayed.model.temperature" type="number" min="0" max="2" step=".1" /></label><label>Max tokens<input v-model.number="displayed.model.max_tokens" type="number" min="1" max="131072" /></label><label>Timeout (seconds)<input v-model.number="displayed.model.timeout" type="number" min="1" max="300" /></label><label>Send stop sequences<input v-model="displayed.model.send_stop" type="checkbox" /></label><h3>Credentials</h3><label class="stacked">Key environment variable<input v-model="displayed.model.api_key_env" /></label><label>API key<select v-model="keyAction"><option value="keep">{{ keyStatus === 'empty' ? 'No key set' : keyStatus === 'saved' ? 'Keep saved key' : 'Use environment' }}</option><option value="replace">Replace key</option><option value="clear">Clear saved key</option></select></label><label v-if="keyAction === 'replace'" class="stacked">New API key<input v-model="key" type="password" autocomplete="new-password" placeholder="Enter key" /></label><p class="field-help">Keys stay out of the TOML preview and configuration snapshots. Clear falls back to the environment variable.</p></template>
+            <template v-if="selected === 'agent'"><label>Reasoning mode<select v-model="displayed.agent.mode"><option value="dense">Dense</option><option value="sparse">Sparse</option></select></label><label>Maximum turns<input v-model.number="displayed.agent.max_steps" type="number" min="1" max="1000" /></label><label>Paper examples<select v-model="displayed.agent.paper"><option value="">None</option><option value="hotpotqa">HotpotQA</option><option value="fever">FEVER</option></select></label><h3>Context budget</h3><label>Context characters<input v-model.number="displayed.agent.max_context_chars" type="number" min="1" max="2000000" /></label><label>Observation characters<input v-model.number="displayed.agent.max_observation_chars" type="number" min="1" max="250000" /></label><p class="field-help">Dense mode requests a thought on every turn. Sparse mode lets the model decide when to reason.</p><h3>Task</h3><label class="stacked"><span>Instruction for the next run</span><textarea v-model="visibleTask" rows="4" placeholder="Enter a task…" maxlength="16000"></textarea></label></template>
+            <template v-if="selected === 'tools'"><label>Wikipedia<input v-model="displayed.tools.wikipedia" type="checkbox" /></label><p class="field-help">Search and Lookup retrieve Wikipedia pages.</p><label class="stacked">Workspace path<input v-model="displayed.tools.workspace" placeholder="Empty to disable" /></label><p class="field-help">Read and List are restricted to this directory. Relative paths resolve beside the configuration file.</p><h3>Python functions<button title="Add Python function" aria-label="Add Python function" @click="chooseComponent('custom')"><Plus :size="14" /></button></h3><div v-for="(tool, index) in displayed.tools.custom" :key="index" class="tool-form"><label class="stacked">Name<input v-model="tool.name" /></label><label class="stacked">Description<input v-model="tool.description" /></label><label class="stacked">Callable<input v-model="tool.callable" placeholder="my_tools:lookup" /></label><button class="text-button" @click="displayed.tools.custom.splice(index, 1)">Remove function</button></div><p class="field-help">Handlers are imported and executed when a run starts.</p></template>
+            <template v-if="selected === 'observation'"><label>Character limit<input v-model.number="displayed.agent.max_observation_chars" type="number" min="1" max="250000" /></label><p class="field-help">Tool output is appended to the next model prompt. Output beyond this limit is truncated.</p></template>
+            <template v-if="selected === 'answer'"><p class="field-help">Finish[answer] ends the loop and returns the model's final response.</p><pre class="inspector-answer">{{ run?.result?.answer || 'No answer yet.' }}</pre></template>
+          </fieldset>
+        </div>
+        <div v-else-if="rightTab === 'event'" class="event-inspector"><template v-if="currentEvent"><h2 class="property-title">{{ currentEvent.kind }} <span class="mono">#{{ eventIndex + 1 }}</span></h2><dl><dt>Turn</dt><dd>{{ currentEvent.step }}</dd><dt>Tool</dt><dd>{{ currentEvent.tool || '—' }}</dd><dt>Elapsed</dt><dd>{{ currentEvent.elapsed_seconds.toFixed(3) }}s</dd></dl><h3>Recorded content</h3><pre>{{ currentEvent.text }}</pre><p class="field-help">Previous and next browse recorded events. Use Step in the toolbar to execute another turn.</p></template><p v-else class="muted pad">Select an event from the timeline to inspect its full content.</p></div>
+        <div v-else class="source-editor"><div class="source-info"><span>{{ readOnly ? 'Working-copy source' : 'nreact.toml' }}</span><span>{{ sourceDirty ? 'Modified' : 'Keys omitted' }}</span></div><textarea v-model="source" aria-label="TOML configuration" spellcheck="false" :readonly="readOnly || dirty || busy"></textarea><p v-if="dirty" class="field-help">Save property changes before editing TOML.</p><p v-else class="field-help">Save validates TOML and preserves the existing API key.</p><button class="outline" :disabled="readOnly || busy || !sourceDirty" @click="save"><Save :size="13" /> Save TOML</button></div>
+      </aside>
+    </main>
+    <div v-else class="loading">{{ error ? 'Configuration could not be loaded.' : 'Opening workspace…' }}<button v-if="error" @click="reload">Retry</button></div>
+    <footer class="statusbar"><span class="status-dot" :class="{ live: isActive }"></span><strong>{{ status }}</strong><span class="status-message">{{ isActive && run.status === 'pausing' ? 'Finishing the current turn…' : isActive && run.status === 'cancelling' ? 'Waiting for the in-flight call to return…' : notice }}</span><span class="status-shortcuts">Ctrl S Save · F Fit · ← → Inspect</span><span>Python / local</span></footer>
+    <div v-if="help" class="modal-scrim" @click.self="help = false"><section class="help-dialog" role="dialog" aria-modal="true" aria-label="Workbench guide"><header><h2>Workbench guide</h2><button aria-label="Close guide" @click="help = false"><X :size="18" /></button></header><ol><li>Select <b>Chat model</b> to set your endpoint, model and credentials.</li><li>Select <b>Tool environment</b> to enable Wikipedia, a workspace or Python functions.</li><li>Save the configuration, enter a task and click <b>Run</b>.</li><li><b>Step</b> executes one complete ReAct turn. Pause takes effect before the next turn. Stop waits for an in-flight call and prevents the next operation.</li><li>Choose an event to inspect it. The arrow buttons browse saved events without executing tools.</li></ol><p>Try the offline demo to explore the debugger with a scripted model and fictional pages. Runs and traces are stored beside the configuration in <code>.nreact/runs/</code>.</p><p>Node positions change the view. The connections follow the Python agent's fixed ReAct loop.</p><button class="primary" @click="help = false">Got it</button></section></div>
+  </div>
+</template>

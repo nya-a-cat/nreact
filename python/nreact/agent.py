@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from ._core import Session
+from .control import RunCancelled, RunControl
 from .models import ChatModel
 from .types import Completion, Environment, Event, Model, Observation, Result
 
@@ -60,6 +61,7 @@ class Agent:
         *,
         trace_path: str | Path | None = None,
         on_event: Callable[[Event], None] | None = None,
+        control: RunControl | None = None,
     ) -> Result:
         """Run a fresh episode. An optional JSONL trace is created exclusively.
 
@@ -101,6 +103,12 @@ class Agent:
             })
             self.environment.reset()
             while session.steps < self.max_steps and not session.done:
+                if control:
+                    try:
+                        control.before_turn()
+                    except RunCancelled:
+                        status = "cancelled"
+                        break
                 prompt = prefix + session.history + f"\nGenerate turn {session.steps + 1}.\n"
                 if len(prompt) > self.max_context_chars:
                     status = "context_limit"
@@ -121,6 +129,12 @@ class Agent:
                 for key, value in completion.usage.items():
                     if isinstance(value, int) and value >= 0:
                         usage[key] = usage.get(key, 0) + value
+                if control:
+                    try:
+                        control.check_cancelled()
+                    except RunCancelled:
+                        status = "cancelled"
+                        break
                 # Limit adversarial or misconfigured providers before parsing.
                 if len(completion.text) > self.max_context_chars:
                     status, error = "context_limit", "Model output exceeded the context limit."
@@ -140,6 +154,12 @@ class Agent:
                 if kind == "finish":
                     status, answer = "finished", argument
                     break
+                if control:
+                    try:
+                        control.check_cancelled()
+                    except RunCancelled:
+                        status = "cancelled"
+                        break
                 try:
                     observation = self.environment.step(name, argument)
                     if not isinstance(observation.text, str):

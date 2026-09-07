@@ -10,3 +10,6 @@ The original license is included in python/nreact/prompts/LICENSE.
 Demonstrations contain Wikipedia excerpts. Wikipedia text is subject to
 the applicable Creative Commons Attribution-ShareAlike license and attribution
 requirements: https://en.wikipedia.org/wiki/Wikipedia:Copyrights
+The web workbench bundles Inter and JetBrains Mono under the SIL Open Font
+License 1.1. Their copyright and license texts are included in
+python/nreact/web_static/licenses/ and web/public/licenses/.

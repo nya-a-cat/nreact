@@ -12,6 +12,7 @@ Give an agent a model and tools. It reasons about the task, calls a tool, reads 
 - **Custom tools:** connect Python functions, local files, or your own interactive environment.
 - **Model adapters:** use an OpenAI-compatible endpoint or implement the small `Model` interface.
 - **Run records:** save thoughts, actions, observations, token usage and termination status as JSONL.
+- **Local workbench:** edit TOML, inspect the agent graph, execute one turn at a time and browse saved runs in a Vue interface.
 
 Python 3.10+ · Standard-library runtime on Python 3.11+ · Windows, Linux and macOS
 
@@ -34,6 +35,20 @@ uv run nreact init
 ```
 
 Edit the model and tool settings in `nreact.toml`. The CLI automatically reads that file; use `--config path/to/config.toml` to choose another. See [TOML configuration](docs/configuration.md) for the file format and custom tools.
+
+### Local workbench
+
+```sh
+uv run nreact ui
+```
+
+The workbench opens at `http://127.0.0.1:8765`. Select **Chat model** to configure the endpoint, select **Tool environment** to register tools, then save and enter a task. **Try offline demo** walks through a scripted example with fictional pages and no external requests.
+
+**Step** executes one complete ReAct turn. **Pause** waits for the next turn boundary; **Stop** prevents the next operation after an in-flight call returns. Select an event to highlight its component and inspect the recorded content. The previous/next buttons browse history without executing tools.
+
+The graph displays the Python agent's ReAct loop. Dragging components changes their layout; connections follow the execution contract. The side panels collapse into drawers in narrow windows. Open them from the left icon rail, and use **View → Reset node positions** to restore the layout.
+
+Completed runs persist beside the configuration in `.nreact/runs/`. Configuration snapshots omit API keys; task and tool content remains in the trace. See the [workbench guide](docs/workbench.md) for controls and storage details.
 
 ### Python API
 
@@ -107,6 +122,16 @@ uv build
 ```
 
 Tests run without API keys or external network access. CI covers Windows, Linux and macOS.
+
+The installed Python package includes the compiled interface and local fonts. To edit the Vue frontend:
+
+```sh
+cd web
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm build
+```
+
+For development, keep `uv run nreact ui --no-browser` running from the repository root and run `pnpm dev` in `web/`. Vite proxies the local API. Rebuild the assets before packaging with `uv build`.
 
 Python 3.10 uses the `tomli` compatibility package.
 

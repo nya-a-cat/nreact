@@ -12,3 +12,6 @@ process.md
 runs/
 .ruff_cache/
 /nreact.toml
+.nreact/
+web/node_modules/
+web/.vite/

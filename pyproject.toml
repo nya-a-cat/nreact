@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nreact"
-version = "0.2.0"
+version = "0.3.0"
 description = "A small, pure Python ReAct agent for tools and interactive environments."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,7 +23,7 @@ nreact = "nreact.cli:main"
 packages = ["python/nreact"]
 
 [tool.hatch.build.targets.sdist]
-include = ["python/", "tests/", "examples/", "docs/", "README.md", "LICENSE", "NOTICE", "pyproject.toml", "uv.lock"]
+include = ["python/", "tests/", "examples/", "docs/", "web/src/", "web/public/", "web/tests/", "web/index.html", "web/package.json", "web/pnpm-lock.yaml", "web/pnpm-workspace.yaml", "web/vite.config.js", "README.md", "LICENSE", "NOTICE", "pyproject.toml", "uv.lock"]
 
 [tool.uv]
 default-groups = []

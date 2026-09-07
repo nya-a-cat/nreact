@@ -37,13 +37,17 @@ def demo_agent() -> Agent:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="nreact", description="A small, pure Python ReAct agent.")
-    root.add_argument("--version", action="version", version="nreact 0.2.0")
+    root.add_argument("--version", action="version", version="nreact 0.3.0")
     commands = root.add_subparsers(dest="command", required=True)
     demo = commands.add_parser("demo", help="Run a scripted, fictional offline example.")
     demo.add_argument("--trace", help="Create a new JSONL trace file.")
     demo.add_argument("--json", action="store_true", help="Print result JSON.")
     init = commands.add_parser("init", help="Create a local TOML configuration.")
     init.add_argument("--config", default="nreact.toml", help="New configuration path.")
+    ui = commands.add_parser("ui", help="Open the local agent workbench.")
+    ui.add_argument("--config", default="nreact.toml", help="Configuration path.")
+    ui.add_argument("--port", type=int, default=8765)
+    ui.add_argument("--no-browser", action="store_true")
     for name in ("run", "eval"):
         command = commands.add_parser(name, help="Run an agent." if name == "run" else "Evaluate a QA JSONL dataset.")
         command.add_argument("--config", help="TOML file; automatically uses ./nreact.toml when present.")
@@ -76,6 +80,10 @@ def main(argv: list[str] | None = None) -> int:
             config = parse_config({}, arguments.config)
             save_config(config)
             print(f"Created {config.path}")
+            return 0
+        if arguments.command == "ui":
+            from .web import serve
+            serve(arguments.config, port=arguments.port, open_browser=not arguments.no_browser)
             return 0
         if arguments.command == "demo":
             if not arguments.json:
