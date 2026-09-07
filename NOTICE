@@ -1,0 +1,12 @@
+nreact includes ReAct few-shot demonstrations from:
+https://github.com/ysymyth/ReAct
+Commit: 6bdb3a1fd38b8188fc7ba4102969fe483df8fdc9
+Copyright (c) 2023 Shunyu Yao. MIT License.
+
+python/nreact/prompts/paper.json contains the unchanged values of:
+- prompts/prompts_naive.json: webthink_simple6 (hotpotqa)
+- prompts/fever.json: webthink_simple3 (fever)
+The original license is included in python/nreact/prompts/LICENSE.
+Demonstrations contain Wikipedia excerpts. Wikipedia text is subject to
+the applicable Creative Commons Attribution-ShareAlike license and attribution
+requirements: https://en.wikipedia.org/wiki/Wikipedia:Copyrights

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nreact"
+version = "0.1.0"
+description = "A small, pure Python ReAct agent for tools and interactive environments."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "nya-a-cat" }]
+keywords = ["react", "agent", "llm", "reasoning"]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/nya-a-cat/nreact"
+
+[project.scripts]
+nreact = "nreact.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/nreact"]
+
+[tool.hatch.build.targets.sdist]
+include = ["python/", "tests/", "examples/", "docs/", "README.md", "LICENSE", "NOTICE", "pyproject.toml", "uv.lock"]
+
+[tool.uv]
+default-groups = []

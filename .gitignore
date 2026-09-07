@@ -1,0 +1,13 @@
+.venv/
+target/
+dist/
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.env
+.env.*
+!.env.example
+process.md
+runs/
+.ruff_cache/
