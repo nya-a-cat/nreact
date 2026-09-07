@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nreact"
-version = "0.1.0"
+version = "0.2.0"
 description = "A small, pure Python ReAct agent for tools and interactive environments."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "nya-a-cat" }]
 keywords = ["react", "agent", "llm", "reasoning"]
-dependencies = []
+dependencies = ["tomli==2.2.1; python_version < '3.11'"]
 
 [project.urls]
 Repository = "https://github.com/nya-a-cat/nreact"
@@ -23,7 +23,7 @@ nreact = "nreact.cli:main"
 packages = ["python/nreact"]
 
 [tool.hatch.build.targets.sdist]
-include = ["python/", "tests/", "examples/", "docs/", "README.md", "LICENSE", "NOTICE", "pyproject.toml", "uv.lock"]
+include = ["python/", "tests/", "examples/", "docs/", "web/src/", "web/public/", "web/index.html", "web/package.json", "web/pnpm-lock.yaml", "web/vite.config.js", "README.md", "LICENSE", "NOTICE", "pyproject.toml", "uv.lock"]
 
 [tool.uv]
 default-groups = []

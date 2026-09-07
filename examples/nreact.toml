@@ -1,0 +1,13 @@
+# Copy this file to your working directory and set the model endpoint.
+[model]
+name = "your-model-name"
+base_url = "http://127.0.0.1:8080/v1"
+api_key_env = "NREACT_API_KEY"
+
+[agent]
+mode = "dense"
+max_steps = 20
+
+[tools]
+wikipedia = true
+workspace = "."

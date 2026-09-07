@@ -4,12 +4,12 @@ import argparse
 import json
 import sys
 import unicodedata
+from pathlib import Path
 
 from .agent import Agent
 from .evaluation import evaluate
-from .models import ChatModel, ScriptedModel
-from .paper import paper_examples
-from .tools import ToolEnvironment, workspace_tools
+from .models import ScriptedModel
+from .config import build_agent, load_config, parse_config, save_config
 from .types import Event
 from .wiki import WikiEnvironment
 
@@ -37,20 +37,29 @@ def demo_agent() -> Agent:
 
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="nreact", description="A small, pure Python ReAct agent.")
-    root.add_argument("--version", action="version", version="nreact 0.1.0")
+    root.add_argument("--version", action="version", version="nreact 0.2.0")
     commands = root.add_subparsers(dest="command", required=True)
     demo = commands.add_parser("demo", help="Run a scripted, fictional offline example.")
     demo.add_argument("--trace", help="Create a new JSONL trace file.")
     demo.add_argument("--json", action="store_true", help="Print result JSON.")
+    init = commands.add_parser("init", help="Create a local TOML configuration.")
+    init.add_argument("--config", default="nreact.toml", help="New configuration path.")
+    ui = commands.add_parser("ui", help="Open the local configuration interface.")
+    ui.add_argument("--config", default="nreact.toml", help="Configuration path to edit.")
+    ui.add_argument("--port", type=int, default=8765)
+    ui.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser.")
     for name in ("run", "eval"):
         command = commands.add_parser(name, help="Run an agent." if name == "run" else "Evaluate a QA JSONL dataset.")
-        command.add_argument("--model", help="Model name; defaults to NREACT_MODEL.")
-        command.add_argument("--mode", choices=["dense", "sparse"], default="dense")
-        command.add_argument("--max-steps", type=int, default=20)
-        command.add_argument("--max-tokens", type=int, default=512)
-        command.add_argument("--timeout", type=float, default=60)
-        command.add_argument("--no-stop", action="store_true", help="Omit stop for servers that reject it.")
-        command.add_argument("--paper", choices=["hotpotqa", "fever"], help="Load the authors' few-shot examples.")
+        command.add_argument("--config", help="TOML file; automatically uses ./nreact.toml when present.")
+        command.add_argument("--model", help="Override the configured model name.")
+        command.add_argument("--base-url", help="Override the configured model endpoint.")
+        command.add_argument("--mode", choices=["dense", "sparse"])
+        command.add_argument("--max-steps", type=int)
+        command.add_argument("--max-tokens", type=int)
+        command.add_argument("--timeout", type=float)
+        command.add_argument("--no-stop", dest="send_stop", action="store_const", const=False, default=None,
+                             help="Omit stop for servers that reject it.")
+        command.add_argument("--paper", choices=["hotpotqa", "fever", "none"], help="Select few-shot examples.")
         if name == "run":
             command.add_argument("task")
             command.add_argument("--workspace", help="Enable read/list in this directory instead of Wikipedia.")
@@ -67,6 +76,15 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
+        if arguments.command == "init":
+            config = parse_config({}, arguments.config)
+            save_config(config)
+            print(f"Created {config.path}")
+            return 0
+        if arguments.command == "ui":
+            from .web import serve
+            serve(arguments.config, port=arguments.port, open_browser=not arguments.no_browser)
+            return 0
         if arguments.command == "demo":
             if not arguments.json:
                 print("Offline scripted example with fictional pages; no model inference.", file=sys.stderr)
@@ -74,14 +92,21 @@ def main(argv: list[str] | None = None) -> int:
                                       trace_path=arguments.trace,
                                       on_event=None if arguments.json else show_event)
         else:
-            if getattr(arguments, "workspace", None) and arguments.paper:
-                raise ValueError("Paper QA examples require the Wikipedia environment.")
-            model = ChatModel.from_env(arguments.model, timeout=arguments.timeout,
-                                        max_tokens=arguments.max_tokens, send_stop=not arguments.no_stop)
-            environment = (ToolEnvironment(workspace_tools(arguments.workspace))
-                           if getattr(arguments, "workspace", None) else WikiEnvironment())
-            agent = Agent(model, environment, mode=arguments.mode, max_steps=arguments.max_steps,
-                          examples=paper_examples(arguments.paper) if arguments.paper else "")
+            config = load_config(arguments.config or "nreact.toml", missing_ok=arguments.config is None)
+            data = config.to_dict()
+            for flag, field in (("model", "name"), ("base_url", "base_url"), ("max_tokens", "max_tokens"),
+                                ("timeout", "timeout"), ("send_stop", "send_stop")):
+                value = getattr(arguments, flag)
+                if value is not None:
+                    data["model"][field] = value
+            for flag in ("mode", "max_steps", "paper"):
+                value = getattr(arguments, flag)
+                if value is not None:
+                    data["agent"][flag] = "" if value == "none" else value
+            if getattr(arguments, "workspace", None) is not None:
+                data["tools"]["workspace"] = str(Path(arguments.workspace).absolute())
+                data["tools"]["wikipedia"] = False
+            agent = build_agent(parse_config(data, config.path, use_environment=False))
             if arguments.command == "eval":
                 summary = evaluate(agent, arguments.dataset, arguments.output,
                                    limit=arguments.limit, seed=arguments.seed)

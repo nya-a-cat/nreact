@@ -43,7 +43,7 @@ class WikiEnvironment:
         parameters = {"action": "query", "format": "json", "formatversion": 2, **parameters}
         url = "https://en.wikipedia.org/w/api.php?" + urllib.parse.urlencode(parameters)
         request = urllib.request.Request(url, headers={
-            "User-Agent": "nreact/0.1.0 (https://github.com/nya-a-cat/nreact)",
+            "User-Agent": "nreact/0.2.0 (https://github.com/nya-a-cat/nreact)",
         })
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
             data = response.read(4_000_001)

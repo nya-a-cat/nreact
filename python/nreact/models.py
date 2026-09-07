@@ -72,7 +72,7 @@ class ChatModel:
         }
         if self.send_stop:
             body["stop"] = list(stop)
-        headers = {"Content-Type": "application/json", "User-Agent": "nreact/0.1.0"}
+        headers = {"Content-Type": "application/json", "User-Agent": "nreact/0.2.0"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         request = urllib.request.Request(self.base_url + "/chat/completions",
