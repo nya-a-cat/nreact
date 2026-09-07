@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Blocks, Layers, History, Code, Search, Plus, Play, Pause, Square, StepForward, ChevronLeft, ChevronRight, Save, RotateCcw, Download, X, CircleHelp, Terminal, SlidersHorizontal, Eye, Check, ArrowLeft, FileText } from '@lucide/vue'
 import GraphCanvas from './GraphCanvas.vue'
 import { workflow, eventNode } from './graph.js'
@@ -12,6 +12,19 @@ const error = ref(''), notice = ref(''), busy = ref(false), menu = ref(''), help
 const sidebar = ref(window.innerWidth >= 1250), inspectorOpen = ref(window.innerWidth >= 1000), timeline = ref(true)
 const compact = ref(window.innerWidth < 1250), narrow = ref(window.innerWidth < 1000)
 const layers = ref({ config: true, action: true, observation: true })
+const eventList = ref(null)
+const exported = ref(null), copyStatus = ref('')
+const confirmReload = ref(false)
+const modalOpen = computed(() => confirmReload.value || !!exported.value || help.value)
+let previousFocus
+watch(modalOpen, async open => {
+  if (open) previousFocus = document.activeElement
+  await nextTick()
+  if (open) {
+    const dialog = document.querySelector('.modal-scrim [role="dialog"]')
+    ;(dialog?.querySelector('[autofocus]') || dialog?.querySelector('button'))?.focus()
+  } else if (previousFocus?.isConnected) previousFocus.focus()
+})
 const token = document.querySelector('meta[name="nreact-token"]')?.content
 const dirty = computed(() => !!config.value && (JSON.stringify(config.value) !== baseline.value || keyAction.value !== 'keep'))
 const sourceDirty = computed(() => source.value !== savedSource.value)
@@ -21,10 +34,13 @@ const visibleTask = computed({ get: () => run.value?.task || task.value, set: va
 const events = computed(() => run.value?.events || [])
 const currentEvent = computed(() => events.value[eventIndex.value] || null)
 const isActive = computed(() => run.value && run.value.id === activeId.value)
-const canRun = computed(() => config.value && !busy.value && !activeId.value && !dirty.value && !sourceDirty.value && revision.value !== 'missing' && config.value.model.name.trim() && task.value.trim())
+const canRun = computed(() => config.value && !readOnly.value && !busy.value && !activeId.value && !dirty.value && !sourceDirty.value && revision.value !== 'missing' && config.value.model.name.trim() && task.value.trim())
+const runHint = computed(() => activeId.value ? 'Return to the active run to resume or stop it.' : readOnly.value ? 'Return to the working copy to start a new run.' : dirty.value || sourceDirty.value || revision.value === 'missing' ? 'Save the configuration before running.' : !config.value?.model.name.trim() ? 'Set a model name in Chat model properties.' : !task.value.trim() ? 'Enter a task in Task or ReAct agent properties.' : 'Run the saved configuration.')
 const graphNodes = computed(() => displayed.value ? workflow(displayed.value).nodes : [])
 const selectedTitle = computed(() => graphNodes.value.find(node => node.id === selected.value)?.data.title || 'Properties')
 const status = computed(() => run.value?.status || (dirty.value || sourceDirty.value ? 'Unsaved changes' : revision.value === 'missing' ? 'New configuration' : 'Ready'))
+watch([dirty, sourceDirty], ([propertiesChanged, sourceChanged]) => { if (propertiesChanged || sourceChanged) notice.value = '' })
+watch([eventIndex, bottomTab, timeline], async () => { await nextTick(); eventList.value?.querySelector('button.chosen')?.scrollIntoView({ block: 'nearest' }) })
 const groups = [
   { title: 'Core', items: [{ id: 'task', name: 'Task input', detail: 'The question or instruction', icon: FileText }, { id: 'model', name: 'Chat model', detail: 'OpenAI-compatible endpoint', icon: Blocks }, { id: 'agent', name: 'ReAct agent', detail: 'Reason · act · observe', icon: SlidersHorizontal }] },
   { title: 'Tools', items: [{ id: 'wikipedia', name: 'Wikipedia', detail: 'Search and look up pages', icon: Search }, { id: 'workspace', name: 'Workspace', detail: 'Read files and list directories', icon: FileText }, { id: 'custom', name: 'Python function', detail: 'Register a module:function', icon: Code }] },
@@ -38,8 +54,9 @@ async function api(path, payload) {
   return data
 }
 function applyConfig(data) { config.value = data.config; baseline.value = JSON.stringify(data.config); revision.value = data.revision; configPath.value = data.path; source.value = savedSource.value = data.toml; keyStatus.value = data.key_status; key.value = ''; keyAction.value = 'keep' }
-async function guarded(action) { busy.value = true; error.value = ''; try { await action() } catch (reason) { error.value = reason.message } finally { busy.value = false; menu.value = '' } }
-async function reload() { if ((dirty.value || sourceDirty.value) && !window.confirm('Discard unsaved configuration changes?')) return; await guarded(async () => { applyConfig(await api('config')); notice.value = 'Configuration reloaded' }) }
+async function guarded(action) { if (busy.value) return; busy.value = true; error.value = ''; notice.value = ''; try { await action() } catch (reason) { error.value = reason.message } finally { busy.value = false; menu.value = '' } }
+async function loadSavedConfig() { confirmReload.value = false; await guarded(async () => { applyConfig(await api('config')); notice.value = 'Configuration reloaded' }) }
+function reload() { if (dirty.value || sourceDirty.value) { confirmReload.value = true; menu.value = ''; return }; return loadSavedConfig() }
 async function save() { await guarded(async () => {
   if (sourceDirty.value && dirty.value) throw new Error('Both properties and TOML have changes. Save one editor at a time; reload to discard both drafts.')
   const payload = sourceDirty.value ? { toml: source.value, revision: revision.value } : { config: { ...config.value, model: { ...config.value.model, ...(keyAction.value === 'replace' ? { api_key: key.value } : {}) } }, revision: revision.value, api_key_action: keyAction.value }
@@ -55,25 +72,44 @@ function chooseComponent(id) {
     if (readOnly.value || sourceDirty.value) return
     if (id === 'wikipedia') config.value.tools.wikipedia = true
     if (id === 'workspace' && !config.value.tools.workspace) config.value.tools.workspace = '.'
-    if (id === 'custom') config.value.tools.custom.push({ name: `tool${config.value.tools.custom.length + 1}`, description: '', callable: '' })
+    if (id === 'custom') {
+      const names = new Set(config.value.tools.custom.map(tool => tool.name.toLowerCase()))
+      let number = 1
+      while (names.has(`tool${number}`)) number++
+      config.value.tools.custom.push({ name: `tool${number}`, description: '', callable: '' })
+    }
   } else selectNode(id)
 }
 async function refreshRuns() { const data = await api('runs'); runs.value = data.runs; activeId.value = data.active }
-async function openRun(id) { await guarded(async () => { run.value = await api(`run?id=${id}`); eventIndex.value = run.value.events.length - 1; followLive.value = id === activeId.value; rightTab.value = 'event'; if (compact.value) sidebar.value = false; if (currentEvent.value) selected.value = eventNode(currentEvent.value) }) }
+async function openRun(id) { await guarded(async () => { run.value = await api(`run?id=${id}`); eventIndex.value = run.value.events.length - 1; followLive.value = id === activeId.value; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (currentEvent.value) selected.value = eventNode(currentEvent.value) }) }
 function workingCopy() { run.value = null; eventIndex.value = -1; rightTab.value = 'properties'; selected.value = 'agent' }
+function copyRunTask() { const recordedTask = run.value?.task; workingCopy(); task.value = recordedTask || ''; selectNode('task') }
 async function start(demo = false, singleStep = false) { await guarded(async () => { const data = await api('run', { task: task.value, revision: revision.value, demo, single_step: singleStep }); activeId.value = data.id; run.value = await api(`run?id=${data.id}`); eventIndex.value = run.value.events.length - 1; followLive.value = true; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false; await refreshRuns() }) }
 async function control(action) { await guarded(async () => { await api('run/control', { id: run.value.id, action }); run.value = await api(`run?id=${run.value.id}`); followLive.value = true }) }
-function selectEvent(index) { eventIndex.value = index; followLive.value = false; selected.value = eventNode(currentEvent.value) || 'agent'; rightTab.value = 'event'; inspectorOpen.value = true; if (compact.value) sidebar.value = false }
-function navigateEvent(delta) { selectEvent(Math.max(0, Math.min(events.value.length - 1, eventIndex.value + delta))) }
-function download(value, name, type) { const url = URL.createObjectURL(new Blob([value], { type })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); menu.value = '' }
-function exportRun() { if (run.value) download(JSON.stringify(run.value, null, 2), `run-${run.value.id}.json`, 'application/json') }
+function selectEvent(index, openInspector = true) { eventIndex.value = index; followLive.value = false; selected.value = eventNode(currentEvent.value) || 'agent'; rightTab.value = 'event'; if (openInspector) inspectorOpen.value = true; if (compact.value) sidebar.value = false }
+function navigateEvent(delta) { selectEvent(Math.max(0, Math.min(events.value.length - 1, eventIndex.value + delta)), false) }
+async function exportFile(kind) { await guarded(async () => { exported.value = await api('export', { kind, ...(kind === 'run' ? { id: run.value.id } : {}) }); copyStatus.value = ''; notice.value = 'Export saved to .nreact/exports/' }) }
+function exportRun() { if (run.value) exportFile('run') }
+async function copyExport(pathOnly = false) { try { await navigator.clipboard.writeText(pathOnly ? exported.value.path : exported.value.content); copyStatus.value = pathOnly ? 'Path copied' : 'Content copied' } catch { copyStatus.value = 'Select the text below and press Ctrl/Cmd+C to copy.' } }
 function keydown(event) {
+  if (event.key === 'Escape') { if (confirmReload.value) { confirmReload.value = false; return }; if (exported.value) { exported.value = null; return }; menu.value = ''; help.value = false; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false; return }
+  if (modalOpen.value) {
+    if (event.key === 'Tab') {
+      const items = [...document.querySelectorAll('.modal-scrim button:not(:disabled), .modal-scrim input, .modal-scrim textarea, .modal-scrim a[href]')]
+      const index = items.indexOf(document.activeElement)
+      if ((event.shiftKey && index <= 0) || (!event.shiftKey && (index === -1 || index === items.length - 1))) {
+        event.preventDefault()
+        items[event.shiftKey ? items.length - 1 : 0]?.focus()
+      }
+    }
+    return
+  }
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); if (!busy.value && !readOnly.value) save(); return }
   if (event.target.closest('input,textarea,select,[contenteditable]')) return
   if (event.key.toLowerCase() === 'f') graph.value?.fit()
+  if (event.target.closest('.vue-flow')) return
   if (event.key === 'ArrowLeft' && events.value.length) { event.preventDefault(); navigateEvent(-1) }
   if (event.key === 'ArrowRight' && events.value.length) { event.preventDefault(); navigateEvent(1) }
-  if (event.key === 'Escape') { menu.value = ''; help.value = false }
 }
 function beforeUnload(event) { if (dirty.value || sourceDirty.value) { event.preventDefault(); event.returnValue = '' } }
 let poller, polling = false
@@ -97,7 +133,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
       <nav class="menus" aria-label="Application menu">
         <div v-for="name in ['File', 'View', 'Run', 'Help']" :key="name" class="menu-wrap"><button :class="{ active: menu === name }" @click.stop="menu = menu === name ? '' : name">{{ name }}</button>
           <div v-if="menu === name" class="dropdown" @click.stop>
-            <template v-if="name === 'File'"><button :disabled="readOnly || busy" @click="save"><Save :size="14" /> Save configuration <kbd>Ctrl S</kbd></button><button :disabled="busy" @click="reload"><RotateCcw :size="14" /> Reload from disk</button><button @click="download(savedSource, 'nreact.toml', 'text/plain')"><Download :size="14" /> Export saved TOML</button><button :disabled="!run" @click="exportRun"><Download :size="14" /> Export selected run</button></template>
+            <template v-if="name === 'File'"><button :disabled="readOnly || busy" @click="save"><Save :size="14" /> Save configuration <kbd>Ctrl S</kbd></button><button :disabled="busy" @click="reload"><RotateCcw :size="14" /> Reload from disk</button><button :disabled="busy" @click="exportFile('config')"><Download :size="14" /> Export saved TOML</button><button :disabled="!run" @click="exportRun"><Download :size="14" /> Export selected run</button><button :disabled="!run" @click="copyRunTask(); menu = ''">Copy run task to working copy</button></template>
             <template v-if="name === 'View'"><button @click="sidebar = !sidebar; menu = ''">Toggle component panel</button><button @click="timeline = !timeline; menu = ''">Toggle event timeline</button><button @click="graph?.fit(); menu = ''">Fit graph <kbd>F</kbd></button><button @click="graph?.reset(); menu = ''">Reset node positions</button><button @click="showSource(); menu = ''">Open TOML editor</button></template>
             <template v-if="name === 'Run'"><button :disabled="!canRun" @click="start()">Run saved configuration</button><button :disabled="!!activeId || busy" @click="start(true, true)">Step through offline demo</button><button :disabled="!!activeId || busy" @click="start(true)">Run offline demo</button></template>
             <template v-if="name === 'Help'"><button @click="help = true; menu = ''">Workbench guide</button><a href="https://github.com/nya-a-cat/nreact/blob/main/docs/configuration.md" target="_blank" rel="noreferrer">Configuration documentation ↗</a></template>
@@ -106,7 +142,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
       </nav>
       <button class="document-tab" :title="configPath" @click="workingCopy"><FileText :size="14" /> nreact.toml <span class="unsaved">{{ dirty || sourceDirty ? '●' : '' }}</span></button>
       <div class="top-actions"><button aria-label="Save configuration" title="Save configuration (Ctrl S)" :disabled="readOnly || busy || (!dirty && !sourceDirty && revision !== 'missing')" @click="save"><Save :size="14" /><span>Save</span></button><span class="separator"></span>
-        <button class="primary" :disabled="isActive ? busy || run.status !== 'paused' : !canRun" @click="isActive ? control('resume') : start()"><Play :size="13" />{{ isActive && run.status === 'paused' ? 'Resume' : 'Run' }}</button>
+        <button class="primary" :title="isActive ? 'Resume the paused run' : runHint" :disabled="isActive ? busy || run.status !== 'paused' : !canRun" @click="isActive ? control('resume') : start()"><Play :size="13" />{{ isActive && run.status === 'paused' ? 'Resume' : 'Run' }}</button>
         <button aria-label="Pause" title="Pause after the current turn" :disabled="!isActive || busy || run.status !== 'running'" @click="control('pause')"><Pause :size="14" /><span>Pause</span></button>
         <button :disabled="isActive ? busy || run.status !== 'paused' : !canRun" title="Execute one complete ReAct turn" @click="isActive ? control('step') : start(false, true)"><StepForward :size="15" />Step</button>
         <button aria-label="Stop" title="Stop execution" :disabled="!isActive || busy || run.status === 'cancelling'" @click="control('cancel')"><Square :size="12" /><span>Stop</span></button>
@@ -126,12 +162,12 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
         <template v-if="panel === 'history'"><div class="history-actions"><button class="outline" @click="workingCopy"><ArrowLeft :size="13" /> Working copy</button><button title="Refresh history" aria-label="Refresh history" @click="guarded(refreshRuns)"><RotateCcw :size="14" /></button></div><div class="run-list"><button v-for="item in runs" :key="item.id" :class="{ chosen: run?.id === item.id }" @click="openRun(item.id)"><span class="run-list-title">{{ item.demo ? 'Offline demo' : item.model }}</span><p>{{ item.task }}</p><small>{{ item.status }} · {{ item.steps }} turns</small><time>{{ new Date(item.started_at).toLocaleString() }}</time></button><p v-if="!runs.length" class="muted pad">Runs appear here after execution. Completed traces remain available after restarting.</p></div></template>
       </aside>
       <section class="center-pane">
-        <div class="workspace-tabs"><button class="active"><Blocks :size="13" /> {{ run ? (run.demo ? 'Offline demo' : 'Run snapshot') : 'Agent graph' }}</button><span v-if="run" class="snapshot-label">{{ run.id.slice(0, 8) }} · read only</span><button v-if="run" class="return-link" @click="workingCopy"><ArrowLeft :size="12" /> Working copy</button><span v-else class="snapshot-label">Configuration view</span></div>
+        <div class="workspace-tabs"><button class="active" title="Fit all components" @click="graph?.fit()"><Blocks :size="13" /> {{ run ? (run.demo ? 'Offline demo' : 'Run snapshot') : 'Agent graph' }}</button><span v-if="run" class="snapshot-label">{{ run.id.slice(0, 8) }} · read only</span><button v-if="run" class="return-link" @click="workingCopy"><ArrowLeft :size="12" /> Working copy</button><span v-else-if="!activeId" class="snapshot-label">Configuration view</span><button v-if="activeId && !isActive" class="active-run-link" @click="openRun(activeId)"><Play :size="12" /> Return to active run</button></div>
         <GraphCanvas ref="graph" :config="displayed" :task="run?.task || task" :answer="run?.result?.answer || ''" :event="currentEvent" :selected="selected" :layers="layers" :storage-key="configPath" @select="selectNode" />
         <section v-if="timeline" class="trace-panel">
           <header class="trace-heading"><div class="trace-tabs"><button :class="{ active: bottomTab === 'events' }" @click="bottomTab = 'events'"><History :size="13" /> Events <span>{{ events.length }}</span></button><button :class="{ active: bottomTab === 'result' }" @click="bottomTab = 'result'"><Terminal :size="13" /> Result</button></div><div class="trace-nav"><button :disabled="eventIndex <= 0" aria-label="Previous event" title="Previous recorded event (←)" @click="navigateEvent(-1)"><ChevronLeft :size="16" /></button><span>{{ events.length ? eventIndex + 1 : 0 }} / {{ events.length }}</span><button :disabled="eventIndex >= events.length - 1" aria-label="Next event" title="Next recorded event (→)" @click="navigateEvent(1)"><ChevronRight :size="16" /></button><button :class="{ active: followLive && isActive }" :disabled="!events.length" @click="followLive = true; eventIndex = events.length - 1; selected = eventNode(currentEvent); rightTab = 'event'">Latest</button><button :disabled="!run" title="Export run JSON" aria-label="Export run" @click="exportRun"><Download :size="14" /></button></div></header>
           <div v-if="!run" class="trace-empty"><Terminal :size="23" /><div><strong>Ready to inspect a run</strong><p>Enter a task in the inspector, or step through the offline demo.</p></div><button :disabled="!!activeId || busy" @click="start(true, true)">Open demo <StepForward :size="14" /></button></div>
-          <div v-else-if="bottomTab === 'events'" class="event-list"><div class="event-columns"><span>TURN</span><span>EVENT</span><span>CONTENT</span><span>ELAPSED</span></div><button v-for="(event, index) in events" :key="index" :class="{ chosen: eventIndex === index }" @click="selectEvent(index)"><span class="mono">{{ String(event.step).padStart(2, '0') }}</span><span class="event-kind" :class="event.kind">{{ event.kind === 'observation' ? 'observation' : event.tool || event.kind }}</span><span class="event-text">{{ event.text }}</span><span class="mono muted">{{ event.elapsed_seconds.toFixed(3) }}s</span></button><p v-if="!events.length" class="muted pad">Waiting for the first model response…</p></div>
+          <div v-else-if="bottomTab === 'events'" ref="eventList" class="event-list"><div class="event-columns"><span>TURN</span><span>EVENT</span><span>CONTENT</span><span>ELAPSED</span></div><button v-for="(event, index) in events" :key="index" :class="{ chosen: eventIndex === index }" @click="selectEvent(index)"><span class="mono">{{ String(event.step).padStart(2, '0') }}</span><span class="event-kind" :class="event.kind">{{ event.kind === 'observation' ? 'observation' : event.tool || event.kind }}</span><span class="event-text">{{ event.text }}</span><span class="mono muted">{{ event.elapsed_seconds.toFixed(3) }}s</span></button><p v-if="!events.length" class="muted pad">Waiting for the first model response…</p></div>
           <div v-else class="result-output"><p v-if="run.error" class="error-text">{{ run.error }}</p><pre>{{ run.result?.answer || (isActive ? 'Execution in progress…' : 'This run ended without a final answer.') }}</pre><div v-if="run.result" class="result-stats">{{ run.result.model_calls }} model calls · {{ run.result.steps }} turns · {{ run.elapsed_seconds.toFixed(3) }}s <span v-if="Object.keys(run.result.usage).length">· {{ JSON.stringify(run.result.usage) }}</span></div><p v-if="run.storage_error" class="error-text">{{ run.storage_error }}</p></div>
         </section>
       </section>
@@ -151,12 +187,14 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
             <template v-if="selected === 'answer'"><p class="field-help">Finish[answer] ends the loop and returns the model's final response.</p><pre class="inspector-answer">{{ run?.result?.answer || 'No answer yet.' }}</pre></template>
           </fieldset>
         </div>
-        <div v-else-if="rightTab === 'event'" class="event-inspector"><template v-if="currentEvent"><h2 class="property-title">{{ currentEvent.kind }} <span class="mono">#{{ eventIndex + 1 }}</span></h2><dl><dt>Turn</dt><dd>{{ currentEvent.step }}</dd><dt>Tool</dt><dd>{{ currentEvent.tool || '—' }}</dd><dt>Elapsed</dt><dd>{{ currentEvent.elapsed_seconds.toFixed(3) }}s</dd></dl><h3>Recorded content</h3><pre>{{ currentEvent.text }}</pre><p class="field-help">Previous and next browse recorded events. Use Step in the toolbar to execute another turn.</p></template><p v-else class="muted pad">Select an event from the timeline to inspect its full content.</p></div>
+        <div v-else-if="rightTab === 'event'" class="event-inspector"><template v-if="currentEvent"><h2 class="property-title">{{ currentEvent.kind }} <span class="mono">#{{ eventIndex + 1 }}</span></h2><dl><dt>Turn</dt><dd>{{ currentEvent.step }}</dd><dt>Tool</dt><dd>{{ currentEvent.tool || '—' }}</dd><dt>Elapsed</dt><dd>{{ currentEvent.elapsed_seconds.toFixed(3) }}s</dd></dl><div class="detail-navigation"><button :disabled="eventIndex <= 0" aria-label="Previous event detail" @click="navigateEvent(-1)"><ChevronLeft :size="15" /> Previous</button><span>{{ eventIndex + 1 }} / {{ events.length }}</span><button :disabled="eventIndex >= events.length - 1" aria-label="Next event detail" @click="navigateEvent(1)">Next <ChevronRight :size="15" /></button></div><h3>Recorded content</h3><pre>{{ currentEvent.text }}</pre><p class="field-help">Previous and next browse recorded events. Use Step in the toolbar to execute another turn.</p></template><p v-else class="muted pad">Select an event from the timeline to inspect its full content.</p></div>
         <div v-else class="source-editor"><div class="source-info"><span>{{ readOnly ? 'Working-copy source' : 'nreact.toml' }}</span><span>{{ sourceDirty ? 'Modified' : 'Keys omitted' }}</span></div><textarea v-model="source" aria-label="TOML configuration" spellcheck="false" :readonly="readOnly || dirty || busy"></textarea><p v-if="dirty" class="field-help">Save property changes before editing TOML.</p><p v-else class="field-help">Save validates TOML and preserves the existing API key.</p><button class="outline" :disabled="readOnly || busy || !sourceDirty" @click="save"><Save :size="13" /> Save TOML</button></div>
       </aside>
     </main>
     <div v-else class="loading">{{ error ? 'Configuration could not be loaded.' : 'Opening workspace…' }}<button v-if="error" @click="reload">Retry</button></div>
-    <footer class="statusbar"><span class="status-dot" :class="{ live: isActive }"></span><strong>{{ status }}</strong><span class="status-message">{{ isActive && run.status === 'pausing' ? 'Finishing the current turn…' : isActive && run.status === 'cancelling' ? 'Waiting for the in-flight call to return…' : notice }}</span><span class="status-shortcuts">Ctrl S Save · F Fit · ← → Inspect</span><span>Python / local</span></footer>
+    <footer class="statusbar"><span class="status-dot" :class="{ live: isActive }"></span><strong>{{ status }}</strong><span class="status-message">{{ isActive && run.status === 'pausing' ? 'Finishing the current turn…' : isActive && run.status === 'cancelling' ? 'Waiting for the in-flight call to return…' : notice || (!run ? runHint : '') }}</span><span class="status-shortcuts">Ctrl S Save · F Fit · ← → Inspect</span><span>Python / local</span></footer>
+    <div v-if="confirmReload" class="modal-scrim" @click.self="confirmReload = false"><section class="help-dialog" role="dialog" aria-modal="true" aria-label="Reload configuration"><header><h2>Reload configuration?</h2><button aria-label="Close reload prompt" @click="confirmReload = false"><X :size="18" /></button></header><p class="reload-message">Your unsaved property and TOML changes will be replaced with the saved file.</p><div class="export-actions"><button class="outline" autofocus @click="confirmReload = false">Keep editing</button><button class="primary" @click="loadSavedConfig">Discard and reload</button></div></section></div>
+    <div v-if="exported" class="modal-scrim" @click.self="exported = null"><section class="help-dialog export-dialog" role="dialog" aria-modal="true" aria-label="Export saved"><header><h2>Export saved</h2><button aria-label="Close export" @click="exported = null"><X :size="18" /></button></header><p class="export-name">{{ exported.name }}</p><label class="stacked">Local file<input :value="exported.path" aria-label="Export path" readonly /></label><div class="export-actions"><button class="outline" @click="copyExport(true)">Copy path</button><button class="outline" @click="copyExport()">Copy content</button><span role="status">{{ copyStatus }}</span></div><textarea :value="exported.content" aria-label="Export content" readonly spellcheck="false"></textarea><button class="primary" @click="exported = null">Done</button></section></div>
     <div v-if="help" class="modal-scrim" @click.self="help = false"><section class="help-dialog" role="dialog" aria-modal="true" aria-label="Workbench guide"><header><h2>Workbench guide</h2><button aria-label="Close guide" @click="help = false"><X :size="18" /></button></header><ol><li>Select <b>Chat model</b> to set your endpoint, model and credentials.</li><li>Select <b>Tool environment</b> to enable Wikipedia, a workspace or Python functions.</li><li>Save the configuration, enter a task and click <b>Run</b>.</li><li><b>Step</b> executes one complete ReAct turn. Pause takes effect before the next turn. Stop waits for an in-flight call and prevents the next operation.</li><li>Choose an event to inspect it. The arrow buttons browse saved events without executing tools.</li></ol><p>Try the offline demo to explore the debugger with a scripted model and fictional pages. Runs and traces are stored beside the configuration in <code>.nreact/runs/</code>.</p><p>Node positions change the view. The connections follow the Python agent's fixed ReAct loop.</p><button class="primary" @click="help = false">Got it</button></section></div>
   </div>
 </template>

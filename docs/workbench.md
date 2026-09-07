@@ -12,7 +12,7 @@ API keys can use an environment variable or a value stored in the local TOML fil
 
 ## Canvas
 
-The graph follows the existing ReAct execution loop: a task and model feed the agent, actions invoke tools, observations return to context, and Finish produces an answer. Connections are derived from this contract. Drag nodes to arrange the view, drag empty space to pan, and scroll to zoom. F fits the graph; View → Reset node positions restores the initial arrangement. Positions are stored in the browser for each configuration path.
+The graph follows the existing ReAct execution loop: a task and model feed the agent, actions invoke tools, observations return to context, and Finish produces an answer. Connections are derived from this contract. Drag nodes to arrange the view, drag empty space to pan, and scroll to zoom. F fits the graph; View → Reset node positions restores the initial arrangement. Tab to a node and press Enter to open its properties, or use arrow keys to move it (Shift moves farther). Positions are stored in the browser for each configuration path.
 
 Layers controls the visibility of configuration, action and observation connections. At widths below 1250 pixels the component library becomes a drawer. Below 1000 pixels the inspector also becomes a drawer. Left-rail icons open each panel; the close button or shaded backdrop closes it.
 
@@ -29,9 +29,11 @@ Run uses the saved configuration and task. Only one run can be active per server
 | Previous / next event | Select an existing event; no model or tool call occurs. |
 | Latest | Select the newest event and follow new events during execution. |
 
-Selecting an event synchronizes the graph, outliner and full content in the Event tab. The Result tab shows the answer, termination details and usage returned by the model. Elapsed time includes time spent paused. The UI does not infer unavailable usage or prices.
+Selecting an event synchronizes the graph, outliner and full content in the Event tab. Previous/next on the timeline keeps the drawer closed when browsing in a narrow window; the Event inspector has its own navigation. The list follows the selected event. The Result tab shows the answer, termination details and usage returned by the model. Elapsed time includes time spent paused. The UI does not infer unavailable usage or prices.
 
-Run history opens the saved configuration snapshot and recorded events. Select Working copy to return to the current editable configuration. Export run saves the selected record as JSON. The most recent 50 runs appear in the history list.
+Run history opens the saved configuration snapshot and recorded events. Select Working copy to return to the current editable configuration. Return to active run restores its execution controls. File → Copy run task to working copy reuses a recorded prompt with the current configuration. The most recent 50 runs appear in the history list.
+
+File → Export saved TOML and Export selected run write unique files under `.nreact/exports/`. The confirmation shows the local file path and contents, with copy buttons. Saved configuration exports omit the API key. This flow also works in embedded browsers that do not support downloads. Reloading a modified configuration presents an in-page choice to keep editing or discard the draft.
 
 ## Local storage
 

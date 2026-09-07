@@ -3,6 +3,7 @@
 import copy
 import hmac
 import json
+import os
 import secrets
 import threading
 import webbrowser
@@ -92,6 +93,26 @@ class LocalApp:
                 if not config.model.name.strip():
                     raise ValueError("Set a model name before running.")
             return self.runs.start(config, task, demo=demo, single_step=stepping)
+
+    def export(self, payload: dict) -> dict:
+        """Export to an exclusive local file, including in browsers without downloads."""
+        kind = payload.get("kind")
+        if kind == "config":
+            content = self.snapshot()["toml"]
+            stem, suffix = "nreact", "toml"
+        elif kind == "run":
+            record = self.runs.snapshot(payload.get("id"))
+            content = json.dumps(record, ensure_ascii=False, indent=2)
+            stem, suffix = f"run-{record['id'][:8]}", "json"
+        else:
+            raise ValueError("Choose a configuration or run to export.")
+        directory = self.path.parent / ".nreact" / "exports"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{stem}-{secrets.token_hex(6)}.{suffix}"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as writer:
+            writer.write(content)
+        return {"path": str(path), "content": content, "name": path.name}
 
 def make_server(path: str | Path = "nreact.toml", *, port: int = 8765) -> ThreadingHTTPServer:
     if type(port) is not int or not 0 <= port <= 65535:
@@ -210,6 +231,8 @@ def make_server(path: str | Path = "nreact.toml", *, port: int = 8765) -> Thread
                     self._json(202, app.start(payload))
                 elif route == "/api/run/control":
                     self._json(200, app.runs.command(payload.get("id"), payload.get("action")))
+                elif route == "/api/export":
+                    self._json(200, app.export(payload))
                 else:
                     self._json(404, {"error": "Not found."})
             except ConflictError as exc:

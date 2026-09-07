@@ -1350,3 +1350,15 @@
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             font-size:11px;
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             padding:0 7px}
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           }
+.active-run-link { color: var(--cream); border: 1px solid #94617f; background: #a60d7030; font-size: 11px; margin-left: auto; }
+.detail-navigation { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding-top: 9px; border-top: 1px solid var(--line); }
+.detail-navigation button { font-size: 11px; padding: 4px; }
+.detail-navigation span { font-size: 10px; color: var(--muted); }
+.export-dialog { width: min(650px, 95vw); }
+.export-dialog .export-name { margin: 16px 0; color: var(--cream); overflow-wrap: anywhere; }
+.export-dialog label { font-size: 11px; }
+.export-dialog label input { margin-top: 7px; font-family: 'JetBrains Mono Variable', Consolas, monospace; font-size: 11px; }
+.export-actions { display: flex; gap: 9px; align-items: center; margin: 13px 0; flex-wrap: wrap; }
+.export-actions span { color: var(--cream); font-size: 11px; }
+.export-dialog textarea { height: min(40vh, 340px); font: 11px/1.7 'JetBrains Mono Variable', Consolas, monospace; }
+.help-dialog .reload-message { margin: 20px 0; font-size: 12px; }
