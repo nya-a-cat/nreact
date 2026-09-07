@@ -1,8 +1,19 @@
 # nreact
 
-A small, pure Python [ReAct](https://arxiv.org/abs/2210.03629) agent. Use it from the terminal or import it into your application.
+[![Tests](https://github.com/nya-a-cat/nreact/actions/workflows/ci.yml/badge.svg)](https://github.com/nya-a-cat/nreact/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-nreact implements interleaved reasoning, tool execution and environment feedback. It includes the authors' HotpotQA and FEVER demonstrations, a Wikipedia environment, local file-reading tools, and JSONL episode traces. Python 3.10+; zero runtime dependencies.
+A pure Python library for building agents with [ReAct](https://arxiv.org/abs/2210.03629).
+
+Give an agent a model and tools. It reasons about the task, calls a tool, reads the result, and continues until it produces an answer. Use the Python API in your application or run an agent from the terminal.
+
+- **ReAct reasoning:** thoughts and actions can alternate on every turn or occur as needed.
+- **Custom tools:** connect Python functions, local files, or your own interactive environment.
+- **Model adapters:** use an OpenAI-compatible endpoint or implement the small `Model` interface.
+- **Run records:** save thoughts, actions, observations, token usage and termination status as JSONL.
+
+Python 3.10+ · Zero runtime dependencies · Windows, Linux and macOS
 
 ## Installation
 
@@ -10,101 +21,81 @@ nreact implements interleaved reasoning, tool execution and environment feedback
 git clone https://github.com/nya-a-cat/nreact.git
 cd nreact
 uv sync --locked
-uv run nreact demo
 ```
 
-The demo uses a scripted model and fictional pages. It runs offline and demonstrates the execution protocol. See [the reproduction notes](docs/reproduction.md) for the relationship to the paper and the validation scope.
+Try `uv run nreact demo` for an offline, scripted example that requires no model server or API key.
 
-To install the command into your user tool environment from a checkout:
+## Quickstart
 
-```sh
-uv tool install .
-nreact --help
-```
+Set `NREACT_MODEL` and `NREACT_BASE_URL` for your model endpoint, plus `NREACT_API_KEY` if required. See [model configuration](docs/usage.md) for examples.
 
-## Usage
+Create an agent with access to the current directory:
 
 ```python
-from nreact import Agent
-agent = Agent(model, environment)
-result = agent.run(task)
+from nreact import Agent, ChatModel, ToolEnvironment, workspace_tools
+
+model = ChatModel.from_env()
+tools = ToolEnvironment(workspace_tools("."))
+agent = Agent(model, tools)
+
+result = agent.run("Read README.md and explain how to use this project.")
+print(result.answer)
 ```
 
-## Python API
+The model can list directories and read files under the selected path. File contents are sent to the configured model endpoint. Save the example as `main.py` and run it with `uv run python main.py`.
+
+The same task from the terminal:
+
+```sh
+uv run nreact run "Read README.md and explain how to use this project." --workspace .
+```
+
+## Custom tools
+
+Wrap a Python function in `Tool` to make it available to the agent:
 
 ```python
 from nreact import Agent, ChatModel, Tool, ToolEnvironment
 
-inventory = {"notebook": 12, "pencil": 40}
-tools = ToolEnvironment([
-    Tool("stock", "Return units available for a product name.",
-         lambda product: str(inventory.get(product, 0))),
-])
+def lookup(name: str) -> str:
+    records = {"language": "Python", "license": "MIT"}
+    return records.get(name, "No matching record.")
 
-agent = Agent(ChatModel.from_env(), tools, mode="dense", max_steps=10)
-result = agent.run("How many notebooks are available?")
-print(result.status, result.answer)
+tools = ToolEnvironment([Tool("lookup", "Look up a project property by name.", lookup)])
+agent = Agent(ChatModel.from_env(), tools)
+result = agent.run("What language and license does the project use?")
+print(result.answer)
 ```
 
-Tool functions accept a string and return a string. JSON can be used inside an argument for structured inputs. Names are case-insensitive; `think` and `finish` are reserved. Tool exceptions become error observations so the model can decide what to do next.
+Tools accept and return strings; structured arguments can use JSON. For stateful tasks, implement an [environment](docs/api.md#custom-environments) with `reset()` and `step()`.
 
-For an entirely offline API example, run `uv run python examples/custom_tool.py`.
+## ReAct
 
-Use the paper's question-answering demonstrations:
+The implementation follows the reasoning–action–observation loop introduced by [Yao et al. (ICLR 2023)](https://arxiv.org/abs/2210.03629). `mode="dense"` generates a thought before each action; `mode="sparse"` lets the model decide when to think.
 
-```python
-from nreact import Agent, ChatModel
-from nreact.paper import paper_examples
-from nreact.wiki import WikiEnvironment
-
-agent = Agent(
-    ChatModel.from_env(),
-    WikiEnvironment(),
-    examples=paper_examples("hotpotqa"),
-    max_steps=7,
-)
-result = agent.run("Who wrote Pride and Prejudice?")
-```
-
-Applications can implement `Model.generate(prompt, *, stop)` and `Environment.reset()/step(name, argument)` to integrate their own models and environments. See [the API guide](docs/api.md). Each agent/environment pair should be used sequentially; create separate instances for concurrent episodes.
-
-## How it works
-
-1. Build context from the task, tool descriptions, few-shot examples and previous turns.
-2. Generate one turn containing a thought, an action, or both, according to the selected mode.
-3. Parse the action and execute the corresponding tool.
-4. Append the actual environment observation and repeat.
-5. End on `Finish[answer]`, an environment terminal state, or a configured limit/error.
-
-In `dense` mode, each turn contains `Thought N:` and `Action N:`. In `sparse` mode, thoughts can occur on their own and environment actions can follow each other. Thought-only turns do not call the environment. Each generation consumes one step, including malformed output.
-
-The implementation resides in a few modules: `_core.py` handles the protocol and state, `agent.py` orchestrates execution, `models.py` calls the model, and `tools.py` / `wiki.py` provide environments.
-
-## Evaluation
-
-Provide a JSONL file with an explicit task and accepted answers per row:
-
-```json
-{"id":"q1","task":"Who wrote Pride and Prejudice?","answers":["Jane Austen"]}
-```
+The authors' HotpotQA and FEVER few-shot examples are bundled with a Wikipedia `Search`/`Lookup` environment:
 
 ```sh
-uv run nreact eval examples/qa.jsonl --paper hotpotqa --limit 2 --output runs/qa-001
+uv run nreact run "Who wrote Pride and Prejudice?" --paper hotpotqa
 ```
 
-The evaluator saves the dataset hash, selected IDs, seed, per-episode traces, statuses and normalized answer exact match. Failed episodes remain in the denominator. This is a QA evaluator; FEVER uses label answers. It does not compute evidence-retrieval scores, supporting-fact scores or the official FEVER score. The bundled two-question file is an example input.
+This release implements the agent loop. The paper's benchmark scores and finetuning results have not been reproduced. [Reproduction notes](docs/reproduction.md) document the implemented components and differences from the reference code.
 
-The current release implements the ReAct execution mechanism and reusable tooling. Published benchmark scores, full ALFWorld/WebShop integrations, CoT/self-consistency hybrids and finetuning have not been reproduced. See [reproduction details](docs/reproduction.md) before comparing results.
+## Documentation
+
+- [Usage guide](docs/usage.md): model setup, command-line options and traces.
+- [API reference](docs/api.md): agents, tools, models, environments and results.
+- [Reproduction notes](docs/reproduction.md): paper prompts, evaluation and implementation details.
+- [Offline example](examples/custom_tool.py): a complete custom-tool agent with a scripted model.
 
 ## Development
 
 ```sh
-uv sync --locked
 uv run python -m unittest discover -s tests -v
 uv build
 ```
 
-Tests exercise the protocol, state transitions, environments, trace/evaluation output, CLI and the HTTP adapter against a local test server. CI runs them on Windows, Linux and macOS. Tests require no API key or external network access.
+Tests run without API keys or external network access. CI covers Windows, Linux and macOS.
 
 ## Citation
 
@@ -121,4 +112,4 @@ Tests exercise the protocol, state transitions, environments, trace/evaluation o
 
 ## License
 
-MIT. Bundled upstream demonstrations retain the authors' copyright and license; see [NOTICE](NOTICE).
+[MIT](LICENSE). Bundled ReAct demonstrations retain the authors' copyright and license; see [NOTICE](NOTICE).
