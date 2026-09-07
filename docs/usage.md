@@ -38,4 +38,3 @@ uv run nreact run "Who wrote Emma?" --trace episode.jsonl --json
 Trace paths must be new files. Parent directories must already exist. Traces include tasks, generated thoughts, actions, observations, token usage reported by the provider and the final status. They can contain private task data; `runs/` is ignored by Git.
 
 `--max-tokens`, `--timeout`, and `--max-steps` bound each generation and episode. Servers that reject stop sequences can use `--no-stop`. Use a model that emits visible text in the requested protocol. Provider-specific hidden reasoning and native function-call formats require a custom model adapter.
-

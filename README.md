@@ -24,10 +24,11 @@ nreact --help
 
 ## Usage
 
-Set `NREACT_MODEL`, `NREACT_BASE_URL`, and optionally `NREACT_API_KEY` for your model provider.
-Run `nreact run "Your task"` to start an agent.
-Add `--workspace .` to read local files, or `--paper hotpotqa` to use the paper's examples.
-See the [usage guide](docs/usage.md) for configuration and options.
+```python
+from nreact import Agent
+agent = Agent(model, environment)
+result = agent.run(task)
+```
 
 ## Python API
 
