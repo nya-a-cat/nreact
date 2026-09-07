@@ -42,11 +42,11 @@ Edit the model and tool settings in `nreact.toml`. The CLI automatically reads t
 uv run nreact ui
 ```
 
-The workbench opens at `http://127.0.0.1:8765`. Select **Chat model** to configure the endpoint, select **Tool environment** to register tools, then save and enter a task. **Try offline demo** walks through a scripted example with fictional pages and no external requests.
+The workbench opens at `http://127.0.0.1:8765`. Edit **ChatModel** and **ConfiguredEnvironment** directly on the canvas, save, then enter a **Task**. **Try offline demo** walks through a scripted example with fictional pages and no external requests.
 
 **Step** executes one complete ReAct turn. **Pause** waits for the next turn boundary; **Stop** prevents the next operation after an in-flight call returns. Select an event to highlight its component and inspect the recorded content. The previous/next buttons browse history without executing tools.
 
-The graph displays the Python agent's ReAct loop. Dragging components changes their layout; connections follow the execution contract. The side panels collapse into drawers in narrow windows. Open them from the left icon rail, and use **View → Reset node positions** to restore the layout.
+The graph binds backend-defined ChatModel, ConfiguredEnvironment, Task, Agent and Result components. Parameters edit the same TOML configuration used by the CLI. Drag nodes, connect compatible ports, or select a wire and press Delete. Incomplete connections block execution; undo and redo restore connection edits. The side panels collapse into drawers in narrow windows. Open them from the left icon rail, and use **View → Reset node positions** to restore the layout.
 
 Completed runs persist beside the configuration in `.nreact/runs/`. Configuration snapshots omit API keys; task and tool content remains in the trace. See the [workbench guide](docs/workbench.md) for controls and storage details.
 

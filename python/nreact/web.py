@@ -14,10 +14,30 @@ from urllib.parse import parse_qs, urlsplit
 
 from .config import dumps_config, load_config, parse_config, revision, save_config, tomllib
 from .runs import RunHistory
+from .graph import GRAPH_SCHEMA, REACT_CONNECTIONS
 
 
 class ConflictError(ValueError):
     pass
+
+
+def validate_connections(value, *, complete=False):
+    if not isinstance(value, list) or len(value) > 32:
+        raise ValueError("Graph connections must be a list of at most 32 links.")
+    actual = set()
+    for edge in value:
+        if not isinstance(edge, dict) or set(edge) != {"source", "sourceHandle", "target", "targetHandle"}:
+            raise ValueError("Each connection requires source, sourceHandle, target and targetHandle.")
+        connection = tuple(edge[key] for key in ("source", "sourceHandle", "target", "targetHandle"))
+        if not all(isinstance(item, str) for item in connection) or connection not in REACT_CONNECTIONS:
+            raise ValueError("Connection ports are incompatible with the ReAct components.")
+        if connection in actual:
+            raise ValueError("Duplicate graph connection.")
+        actual.add(connection)
+    if complete and actual != REACT_CONNECTIONS:
+        missing = sorted(f"{target}.{handle}" for _, _, target, handle in REACT_CONNECTIONS - actual)
+        raise ValueError(f"Connect {', '.join(missing)} before running.")
+    return value
 
 
 class LocalApp:
@@ -39,7 +59,7 @@ class LocalApp:
             config, version = self._load()
             public = parse_config(config.public_dict(), self.path, use_environment=False)
             return {"config": config.public_dict(), "path": str(self.path), "revision": version,
-                    "toml": dumps_config(public),
+                    "toml": dumps_config(public), "graph_schema": GRAPH_SCHEMA,
                     "key_status": "saved" if config.model.api_key else "environment" if config.api_key() else "empty"}
 
     def save(self, payload: dict) -> dict:
@@ -88,6 +108,8 @@ class LocalApp:
         with self.lock:
             config, version = self._load()
             if not demo:
+                if "connections" in payload:
+                    validate_connections(payload["connections"], complete=True)
                 if version == "missing" or payload.get("revision") != version:
                     raise ConflictError("Save or reload the configuration before running.")
                 if not config.model.name.strip():
@@ -104,8 +126,17 @@ class LocalApp:
             record = self.runs.snapshot(payload.get("id"))
             content = json.dumps(record, ensure_ascii=False, indent=2)
             stem, suffix = f"run-{record['id'][:8]}", "json"
+        elif kind == "graph":
+            graph = payload.get("graph")
+            if not isinstance(graph, dict) or set(graph) != {"version", "positions", "connections"} or graph["version"] != GRAPH_SCHEMA["version"]:
+                raise ValueError("Unsupported graph document.")
+            validate_connections(graph["connections"])
+            if not isinstance(graph["positions"], dict):
+                raise ValueError("Graph positions must be an object.")
+            content = json.dumps(graph, ensure_ascii=False, indent=2)
+            stem, suffix = "graph", "json"
         else:
-            raise ValueError("Choose a configuration or run to export.")
+            raise ValueError("Choose a configuration, graph or run to export.")
         directory = self.path.parent / ".nreact" / "exports"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{stem}-{secrets.token_hex(6)}.{suffix}"

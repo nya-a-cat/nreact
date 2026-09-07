@@ -4,7 +4,7 @@ Run `uv run nreact ui` from the directory containing `nreact.toml`. Use `--confi
 
 ## Configuration
 
-The component library selects Task, Chat model, ReAct agent, Tool environment, Observation and Answer. Adding Wikipedia, a workspace or a Python function updates the tool registry. Configure function names, descriptions and `module:function` handlers in the inspector. Handlers load when a run starts.
+The Python server supplies node definitions for ChatModel, ConfiguredEnvironment, Task, Agent and Result. Node controls bind directly to model, agent and tools fields in the configuration. Configure custom function names, descriptions and `module:function` handlers inside the environment node. Handlers load when a run starts. Use the node header ⋯ button for advanced properties and credentials.
 
 Save property changes with the toolbar or Ctrl/Cmd+S. The TOML tab edits the same configuration. Save one editor before switching to the other. Invalid values leave the previous file intact; a file modified externally requires a reload before saving.
 
@@ -12,9 +12,9 @@ API keys can use an environment variable or a value stored in the local TOML fil
 
 ## Canvas
 
-The graph follows the existing ReAct execution loop: a task and model feed the agent, actions invoke tools, observations return to context, and Finish produces an answer. Connections are derived from this contract. Drag nodes to arrange the view, drag empty space to pan, and scroll to zoom. F fits the graph; View → Reset node positions restores the initial arrangement. Tab to a node and press Enter to open its properties, or use arrow keys to move it (Shift moves farther). Positions are stored in the browser for each configuration path.
+The graph follows `build_agent(config)` and `Agent.run(task)`: the model and environment are construction inputs, task is the run input, and Result contains status, answer, steps, model calls, usage and errors. The Agent owns the reasoning loop; actions and observations appear in the event timeline. `max_observation_chars` belongs to Agent. The current backend supports one agent with these fixed component roles. Drag nodes to arrange the view, drag empty space to pan, and scroll to zoom. F fits the graph; View → Reset node positions restores the initial arrangement. Tab to a node and press Enter to open its properties, or use arrow keys to move it (Shift moves farther). Node positions and connections are stored in the browser for each configuration path. Single-click selects a node without opening a panel. Drag an output to an input of the same type to connect; right-click a port to disconnect it, or select a wire and press Delete. A wire also has a right-click Delete menu. Undo/redo restore connection edits. Execution validates the complete construction graph before starting. File → Export working graph saves its layout and links; saved TOML contains the executable settings.
 
-Layers controls the visibility of configuration, action and observation connections. At widths below 1250 pixels the component library becomes a drawer. Below 1000 pixels the inspector also becomes a drawer. Left-rail icons open each panel; the close button or shaded backdrop closes it.
+Layers controls construction inputs and the Result connection. Panels start closed, and execution opens the event timeline. At widths below 1250 pixels the component library becomes a drawer. Below 1000 pixels the inspector also becomes a drawer. Left-rail icons open each panel; the close button or shaded backdrop closes it.
 
 ## Execution and replay
 

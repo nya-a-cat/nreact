@@ -1362,3 +1362,51 @@
 .export-actions span { color: var(--cream); font-size: 11px; }
 .export-dialog textarea { height: min(40vh, 340px); font: 11px/1.7 'JetBrains Mono Variable', Consolas, monospace; }
 .help-dialog .reload-message { margin: 20px 0; font-size: 12px; }
+/* Direct graph editing */
+.workflow-node { cursor: grab; }
+.vue-flow__node.dragging .workflow-node { cursor: grabbing; }
+.vue-flow__handle { width: 13px; height: 13px; border-radius: 50%; border-width: 2px; cursor: crosshair; z-index: 6; }
+.vue-flow__handle:hover { outline: 4px solid #f2e1ac55; }
+.vue-flow__handle.valid { outline: 5px solid #cc76ae88; background: #a60d70; }
+.port-label { opacity: 0; position: absolute; white-space: nowrap; color: #f2f2f2; background: #222426; padding: 3px 6px; border: 1px solid #817c66; font-size: 11px; pointer-events: none; }
+.vue-flow__handle:hover .port-label { opacity: 1; }
+.port-left { right: 19px; top: -7px; }
+.port-right { left: 19px; top: -7px; }
+.port-top { bottom: 18px; left: 50%; transform: translateX(-50%); }
+.port-bottom { top: 18px; left: 50%; transform: translateX(-50%); }
+.vue-flow__edge.selected .vue-flow__edge-path { stroke: #f4a3d3 !important; stroke-width: 3px !important; }
+.vue-flow__edgeupdater { cursor: crosshair; }
+.graph-context-menu { position: absolute; z-index: 30; width: 215px; padding: 5px; background: #2c2e2f; border: 1px solid #a6a292; box-shadow: 0 8px 28px #0008; border-radius: 4px; }
+.graph-context-menu button { width: 100%; justify-content: flex-start; font-size: 12px; }
+.graph-context-menu kbd { margin-left: auto; font-size: 10px; color: var(--muted); }
+.connection-selection,.graph-feedback { position: absolute; bottom: 58px; left: 13px; right: 13px; z-index: 8; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid #8f7182; background: #28232beF; padding: 7px 10px; font-size: 11px; color: #f2e1ac; border-radius: 3px; }
+.connection-selection button,.graph-feedback button { border-color: #8f7182; background: #a60d7040; font-size: 11px; }
+.connection-selection small { color: #ccc5b9; }
+.graph-incomplete { border-color: #938361; background: #302d24ed; }
+.graph-gesture-hint { position: absolute; bottom: 10px; left: 17px; right: 10px; font-size: 10px; color: #bbb7aa; pointer-events: none; }
+.graph-canvas .canvas-legend { bottom: 29px; }
+@media(max-width:700px){.graph-gesture-hint{font-size:9px;line-height:1.5}.canvas-tools{top:43px}.graph-feedback,.connection-selection{font-size:10px;bottom:64px}.connection-selection small{display:none}}
+/* Node controls follow backend configuration keys and stay inside the canvas. */
+.graph-canvas .workflow-node { width: 290px; border-radius: 7px; }
+.graph-canvas .workflow-node header { padding: 9px 12px; font-size: 14px; min-height: 36px; }
+.node-properties { margin-left: auto; padding: 0 5px; border: 0; background: transparent; color: inherit; font-size: 18px; line-height: 20px; cursor: pointer; }
+.graph-canvas .node-subtitle { margin: 0; padding: 7px 12px 5px; font: 9px var(--mono); color: #343630; height: 24px; box-sizing: border-box; }
+.node-sockets { position: relative; margin-bottom: 10px; }
+.socket-name { position: absolute; display: flex; align-items: center; gap: 6px; transform: translateY(-50%); font: 11px var(--mono); }
+.socket-name.left { left: 12px; }.socket-name.right { right: 12px; flex-direction: row-reverse; }.socket-name small { font-size: 9px; opacity: .75; }
+.graph-canvas .node-widgets { min-width: 0; margin: 0; padding: 0 12px 10px; border: 0; display: flex; flex-direction: column; gap: 7px; }
+.node-widget { display: flex; align-items: center; gap: 8px; justify-content: space-between; font: 11px var(--mono); }
+.node-widget.multiline { align-items: stretch; flex-direction: column; gap: 4px; }
+.node-widgets input,.node-widgets select,.node-widgets textarea { min-width: 0; max-width: 100%; background: #f2e1ac; color: #222426; border: 1px solid #8e876e; border-radius: 4px; padding: 5px 7px; font: 11px var(--mono); }
+.node-widgets input[type=number] { width: 102px; }.node-widgets input[type=checkbox] { width: 15px; height: 15px; accent-color: #a60d70; }.node-widgets textarea { resize: vertical; min-height: 75px; }.node-widgets input:focus,.node-widgets select:focus,.node-widgets textarea:focus { outline: 2px solid #a60d70; outline-offset: 1px; }
+.node-tool-heading { display: flex; justify-content: space-between; align-items: center; font: 11px var(--mono); }.node-tool-list button { color: #222426; font-size: 10px; background: #f2e1ac; border-color: #8e876e; }
+.node-custom-tool { margin-top: 8px; padding: 8px; border: 1px solid #7e7968; border-radius: 4px; }.node-custom-tool label { display: flex; flex-direction: column; gap: 3px; font: 10px var(--mono); margin-bottom: 6px; }
+.node-tool-summary { padding: 8px 12px 12px; border-top: 1px solid #8d8775; font: 11px var(--mono); }.node-tool-summary>span { display: block; font-size: 9px; margin-bottom: 6px; }.node-tool-summary>div { line-height: 1.7; }
+.node-result { padding: 0 12px 12px; font: 11px var(--mono); max-height: 330px; overflow: auto; }.node-result dl { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }.node-result dd { margin: 0; text-align: right; overflow-wrap: anywhere; }.node-result pre { background: #f2e1ac; color: #222426; padding: 9px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 150px; overflow: auto; }.node-result small { overflow-wrap: anywhere; }
+.graph-canvas .vue-flow__handle { width: 11px; height: 11px; }.graph-canvas .canvas-caption { font-size: 11px; }.connection-selection,.graph-feedback { right: auto; max-width: calc(100% - 30px); }
+.graph-canvas .node-widgets label { margin: 0; color: #222426; font-size: 11px; }
+.graph-canvas .node-widgets .multiline>input,.graph-canvas .node-widgets .multiline>textarea,.graph-canvas .node-custom-tool input { width: 100%; box-sizing: border-box; }
+.graph-canvas .node-widgets input:not([type=checkbox]),.graph-canvas .node-widgets select { min-height: 27px; font-size: 11px; }
+.graph-canvas .node-subtitle { letter-spacing: 0; }
+.graph-canvas .workflow-node header { height: 36px; box-sizing: border-box; }
+.graph-canvas .node-properties { min-height: 20px; height: 20px; }
