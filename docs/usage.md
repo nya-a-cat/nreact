@@ -1,6 +1,6 @@
 # Usage guide
 
-Use `nreact ui` for the web interface or `nreact init` to create a TOML file. See [configuration](configuration.md) for model/tool settings and precedence. The environment-variable examples below also work when the corresponding fields are omitted from a TOML file.
+Use `nreact init` to create a TOML file. See [configuration](configuration.md) for model/tool settings and precedence. The environment-variable examples below also work when the corresponding fields are omitted from a TOML file.
 
 Configure a text-generating model served through an OpenAI-compatible Chat Completions endpoint, such as a running [llama.cpp server](https://github.com/ggml-org/llama.cpp/tree/master/tools/server). The default endpoint is `http://127.0.0.1:8080/v1`. Remote endpoints require HTTPS.
 

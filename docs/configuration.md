@@ -1,22 +1,6 @@
 # Configuration
 
-nreact supports a local TOML file, a Vue web interface, environment variables and Python objects.
-
-## Web interface
-
-```sh
-uv run nreact ui
-```
-
-Open the displayed local URL, enter the model name and API base URL, select tools, and click **Save configuration**. Use **Run agent** to try the saved settings. API calls follow your provider's billing. The latest run stays in server memory until the server exits or another run starts.
-
-The interface edits `nreact.toml` in the current directory. To choose a different file or port:
-
-```sh
-uv run nreact ui --config my-agent.toml --port 8766
-```
-
-`--no-browser` starts the server without opening a browser. The server binds to `127.0.0.1` and is intended for local use. It uses session tokens and same-origin checks. Node.js is only needed to develop the frontend.
+nreact supports a local TOML file, environment variables and Python objects.
 
 ## TOML file
 
@@ -56,11 +40,11 @@ Workspace paths are relative to the TOML file's directory. An explicit CLI `--wo
 
 ## API keys
 
-Use `model.api_key_env` to reference an environment variable, or save `model.api_key` directly in your local file. A saved key takes priority over the named environment variable. The UI can replace or remove a saved key and never returns its value to the browser. Leaving the password field blank preserves the saved value.
+Use `model.api_key_env` to reference an environment variable, or save `model.api_key` directly in your local file. A saved key takes priority over the named environment variable.
 
 `nreact.toml` is ignored by this repository's Git configuration. Keep other credential-bearing TOML files out of version control too. Saved keys are local plaintext; POSIX writes use mode 0600, and Windows uses the directory's access controls. Clearing a saved key allows the configured environment variable to supply a key again.
 
-Web saves regenerate the supported TOML fields with atomic replacement. Comments and original formatting are not retained. A file changed since the page loaded triggers a conflict; reload before saving again. Configuration errors do not overwrite the existing file. `nreact init` never overwrites an existing file.
+The Python API `save_config(config, overwrite=True)` regenerates supported TOML fields with atomic replacement. Comments and original formatting are not retained. `nreact init` never overwrites an existing file.
 
 ## Custom tools
 
@@ -72,7 +56,7 @@ def stock(product: str) -> str:
     return str(inventory.get(product, 0))
 ```
 
-Register the function in the TOML file, or use **Add tool** in the interface:
+Register the function in the TOML file:
 
 ```toml
 [[tools.custom]]
@@ -98,9 +82,3 @@ print(result.answer)
 ```
 
 Direct construction with `Agent(...)` and `ChatModel.from_env()` remains available and does not automatically load TOML.
-
-## Frontend development
-
-Start the Python backend with `uv run nreact ui --no-browser`, then run `pnpm dev` in `web/`. Vite serves the Vue interface at `http://127.0.0.1:5173` and proxies the API to the backend on port 8765. The development plugin obtains the local session token from the backend.
-
-`pnpm build` writes packaged assets to `python/nreact/web_static/`. Include rebuilt assets when changing the frontend so Python-only installations receive the same interface.

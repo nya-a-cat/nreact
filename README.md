@@ -27,13 +27,13 @@ Try `uv run nreact demo` for an offline, scripted example that requires no model
 
 ## Quickstart
 
-Configure your model and tools in the local web interface:
+Create a local configuration file:
 
 ```sh
-uv run nreact ui
+uv run nreact init
 ```
 
-The Vue interface saves to `nreact.toml`. The CLI automatically reads that file; use `--config path/to/config.toml` to choose another. See [TOML configuration](docs/configuration.md) for the file format and custom tools.
+Edit the model and tool settings in `nreact.toml`. The CLI automatically reads that file; use `--config path/to/config.toml` to choose another. See [TOML configuration](docs/configuration.md) for the file format and custom tools.
 
 ### Python API
 
@@ -93,7 +93,7 @@ This release implements the agent loop. The paper's benchmark scores and finetun
 
 ## Documentation
 
-- [Configuration](docs/configuration.md): TOML, the web interface and custom tool registration.
+- [Configuration](docs/configuration.md): TOML and custom tool registration.
 - [Usage guide](docs/usage.md): model setup, command-line options and traces.
 - [API reference](docs/api.md): agents, tools, models, environments and results.
 - [Reproduction notes](docs/reproduction.md): paper prompts, evaluation and implementation details.
@@ -108,7 +108,7 @@ uv build
 
 Tests run without API keys or external network access. CI covers Windows, Linux and macOS.
 
-The Vue + Vite source is in `web/`. Build it with `pnpm install --frozen-lockfile` and `pnpm build` from that directory. Built assets ship with the Python package; installed users do not need Node.js. Python 3.10 uses the `tomli` compatibility package.
+Python 3.10 uses the `tomli` compatibility package.
 
 ## Citation
 

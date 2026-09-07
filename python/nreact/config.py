@@ -1,4 +1,4 @@
-"""Shared TOML configuration for the CLI, web UI and Python applications."""
+"""Shared TOML configuration for the CLI and Python applications."""
 
 import hashlib
 import importlib
@@ -221,7 +221,7 @@ def dumps_config(config: Config) -> str:
 
 
 def save_config(config: Config, *, overwrite: bool = False) -> None:
-    """Write a complete config; UI saves use atomic replacement and mode 0600."""
+    """Write a complete config; overwrites use atomic replacement and mode 0600."""
     text = dumps_config(config)
     path = config.path
     if path.is_symlink():

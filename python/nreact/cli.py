@@ -44,10 +44,6 @@ def parser() -> argparse.ArgumentParser:
     demo.add_argument("--json", action="store_true", help="Print result JSON.")
     init = commands.add_parser("init", help="Create a local TOML configuration.")
     init.add_argument("--config", default="nreact.toml", help="New configuration path.")
-    ui = commands.add_parser("ui", help="Open the local configuration interface.")
-    ui.add_argument("--config", default="nreact.toml", help="Configuration path to edit.")
-    ui.add_argument("--port", type=int, default=8765)
-    ui.add_argument("--no-browser", action="store_true", help="Print the URL without opening a browser.")
     for name in ("run", "eval"):
         command = commands.add_parser(name, help="Run an agent." if name == "run" else "Evaluate a QA JSONL dataset.")
         command.add_argument("--config", help="TOML file; automatically uses ./nreact.toml when present.")
@@ -80,10 +76,6 @@ def main(argv: list[str] | None = None) -> int:
             config = parse_config({}, arguments.config)
             save_config(config)
             print(f"Created {config.path}")
-            return 0
-        if arguments.command == "ui":
-            from .web import serve
-            serve(arguments.config, port=arguments.port, open_browser=not arguments.no_browser)
             return 0
         if arguments.command == "demo":
             if not arguments.json:

@@ -5,19 +5,6 @@ on:
 permissions:
   contents: read
 jobs:
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm install --global pnpm@11.19.0 --ignore-scripts
-      - run: pnpm install --frozen-lockfile --ignore-scripts
-        working-directory: web
-      - run: pnpm build
-        working-directory: web
-      - run: git diff --exit-code -- python/nreact/web_static
   test:
     strategy:
       fail-fast: false
