@@ -1417,6 +1417,6 @@
 .node-icon { flex-shrink: 0; color: currentColor; }
 
 .graph-canvas .wire-outline,
-.graph-canvas .wire-core { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.graph-canvas .wire-core { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .graph-canvas .wire-outline { stroke: #000; stroke-width: 6px; pointer-events: none; }
 .graph-canvas .wire-core { stroke-width: 4px; }
