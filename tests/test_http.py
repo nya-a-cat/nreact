@@ -95,10 +95,11 @@ class HTTPTests(unittest.TestCase):
         self.reply = response
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "note.txt").write_text("blue", encoding="utf-8")
-            env = {**os.environ, "NREACT_BASE_URL": self.url, "NREACT_MODEL": "test-fixture", "NREACT_API_KEY": "test-only-key"}
+            env = {**os.environ, "NREACT_BASE_URL": self.url, "NREACT_MODEL": "test-fixture",
+                   "NREACT_API_KEY": "test-only-key", "NREACT_AUTH": "api_key"}
             trace = Path(directory) / "trace.jsonl"
             result = subprocess.run([sys.executable, "-m", "nreact", "run", "Read note.txt", "--workspace", directory,
-                                     "--trace", str(trace), "--json"], env=env, capture_output=True, text=True)
+                                     "--trace", str(trace), "--json"], env=env, cwd=directory, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout)["answer"], "blue")
             self.assertNotIn("test-only-key", trace.read_text(encoding="utf-8"))
