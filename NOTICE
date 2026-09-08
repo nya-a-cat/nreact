@@ -13,3 +13,4 @@ requirements: https://en.wikipedia.org/wiki/Wikipedia:Copyrights
 The web workbench bundles Inter and JetBrains Mono under the SIL Open Font
 License 1.1. Their copyright and license texts are included in
 python/nreact/web_static/licenses/ and web/public/licenses/.
+The web workbench bundles Lucide icons under the ISC license, with selected Feather-derived icons under MIT. The license text is included in web/public/licenses/Lucide.txt and python/nreact/web_static/licenses/Lucide.txt.

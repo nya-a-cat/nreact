@@ -1,5 +1,7 @@
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
+import { FileText, MessageSquareText, Bot, Wrench, FileCheck } from '@lucide/vue'
+const nodeIcons = { task: FileText, model: MessageSquareText, agent: Bot, tools: Wrench, answer: FileCheck }
 defineProps({ data: Object, selected: Boolean })
 const emit = defineEmits(['disconnect-port', 'port-click', 'edit', 'inspect'])
 const change = (field, event) => emit('edit', field.path, field.kind === 'boolean' ? event.target.checked : field.kind === 'number' ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value)
@@ -12,7 +14,7 @@ function addTool(field) {
 </script>
 <template>
   <article class="workflow-node" :class="{ selected, executing: data.active }">
-    <header><span class="node-square"></span><strong>{{ data.title }}</strong><span v-if="data.active" class="node-live">●</span><button class="node-properties nodrag" title="Open properties" :aria-label="`Open ${data.title} properties`" @click.stop="emit('inspect')">⋯</button></header>
+    <header><component :is="nodeIcons[data.id] || FileText" class="node-icon" :size="16" :stroke-width="1.8" aria-hidden="true" /><strong>{{ data.title }}</strong><span v-if="data.active" class="node-live">●</span><button class="node-properties nodrag" title="Open properties" :aria-label="`Open ${data.title} properties`" @click.stop="emit('inspect')">⋯</button></header>
     <div class="node-subtitle">{{ data.subtitle }}</div>
     <div class="node-sockets" :style="{ height: `${data.portHeight}px` }">
       <div v-for="port in data.ports" :key="`${port.direction}-${port.id}`" class="socket-name" :class="port.side" :style="{ top: `${port.offset - 60}px` }"><span>{{ port.id }}</span><small>{{ port.type }}</small></div>
