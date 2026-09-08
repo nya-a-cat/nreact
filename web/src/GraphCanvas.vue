@@ -3,6 +3,7 @@ import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Minus, Plus, Maximize, Undo2, Redo2, Trash2, RotateCcw } from '@lucide/vue'
 import WorkflowNode from './WorkflowNode.vue'
+import WorkflowEdge from './WorkflowEdge.vue'
 import { workflow } from './graph.js'
 
 const props = defineProps({ config: Object, task: String, result: Object, schema: Object, editLocked: Boolean, event: Object, selected: String, layers: Object, storageKey: String, readOnly: Boolean })
@@ -91,7 +92,7 @@ function renderEdges() {
     return { ...(base || standard[0]), ...connection, id: identity(connection), label: undefined,
       data: { layer }, hidden: !props.layers[layer], selected: selectedEdge.value === identity(connection),
       updatable: !props.readOnly, selectable: true, interactionWidth: 24,
-      style: { stroke: layer === 'action' ? '#cf559e' : '#a6a292', strokeWidth: 2},
+      style: { stroke: layer === 'action' ? '#cf559e' : '#a6a292', strokeWidth: 4 },
     }
   })
   missing.value = standard.filter(edge => !current.some(connection => identity(connection) === identity(edge))).map(edge => `${edge.target}.${edge.targetHandle}`)
@@ -206,9 +207,11 @@ onUnmounted(() => { observer?.disconnect(); clearTimeout(resizeTimer); clearTime
     </div>
     <VueFlow v-model:nodes="nodes" v-model:edges="edges" :nodes-draggable="true" :nodes-connectable="!readOnly" :edges-updatable="!readOnly" :is-valid-connection="valid" :connect-on-click="false" :edge-updater-radius="14" :node-drag-threshold="3" :delete-key-code="null" :min-zoom=".3" :max-zoom="1.6" :fit-view-on-init="true" :fit-view-params="{ padding: .17 }" :zoom-on-double-click="false" @node-click="selectNode"  @node-drag-stop="remember" @edge-click="selectConnection" @edge-context-menu="edgeMenu" @pane-click="paneClick" @connect="connect" @connect-start="startDrag" @connect-end="endDrag" @edge-update-start="updatingEdge = $event.edge.id; connectionAdded = false" @edge-update="updateConnection" @edge-update-end="updatingEdge = null">
       <template #node-workbench="nodeProps"><WorkflowNode v-bind="nodeProps" @disconnect-port="disconnectPort(nodeProps.id, $event); cancelPort()" @port-click="(handleId, event) => clickPort(nodeProps.id, handleId, event)" @edit="(path, value) => emit('edit', path, value)" @inspect="emit('select', nodeProps.id, true)" /></template>
+      <template #edge-outlined="edgeProps"><WorkflowEdge v-bind="edgeProps" /></template>
+      <template #connection-line="lineProps"><WorkflowEdge v-bind="lineProps" preview /></template>
     </VueFlow>
     <div v-if="context" class="graph-context-menu" :style="{ left: `${context.x}px`, top: `${context.y}px` }"><button :disabled="readOnly" @click="removeConnection()"><Trash2 :size="14" /> Delete connection <kbd>Del</kbd></button><button @click="context = null">Cancel</button></div>
-    <svg v-if="preview" class="port-preview"><path :d="preview" /></svg><div v-if="pendingPort" class="graph-feedback port-actions" role="status"><span>{{ portError || `${pendingPort.nodeId}.${pendingPort.handleId} · Click a ${pendingPort.type} ${pendingPort.direction === 'source' ? 'input' : 'output'}` }}</span><button v-if="pendingLinks.length" @click="disconnectPort(pendingPort.nodeId, pendingPort.handleId); cancelPort()">Disconnect port</button><button @click="cancelPort">Cancel · Esc</button></div><div v-else-if="selectedEdge" class="connection-selection"><span>Connection selected</span><button :disabled="readOnly" @click="removeConnection()"><Trash2 :size="13" /> Disconnect</button><small v-if="!readOnly">Drag either end to reconnect</small></div>
+    <svg v-if="preview" class="port-preview"><path class="wire-outline" :d="preview" /><path class="wire-core" :d="preview" /></svg><div v-if="pendingPort" class="graph-feedback port-actions" role="status"><span>{{ portError || `${pendingPort.nodeId}.${pendingPort.handleId} · Click a ${pendingPort.type} ${pendingPort.direction === 'source' ? 'input' : 'output'}` }}</span><button v-if="pendingLinks.length" @click="disconnectPort(pendingPort.nodeId, pendingPort.handleId); cancelPort()">Disconnect port</button><button @click="cancelPort">Cancel · Esc</button></div><div v-else-if="selectedEdge" class="connection-selection"><span>Connection selected</span><button :disabled="readOnly" @click="removeConnection()"><Trash2 :size="13" /> Disconnect</button><small v-if="!readOnly">Drag either end to reconnect</small></div>
     <div v-else-if="feedback" class="graph-feedback" role="status">{{ feedback }}</div>
     <div v-else-if="missing.length && !readOnly" class="graph-feedback graph-incomplete"><span>Connect {{ missing.join(', ') }} before running.</span><button @click="restoreConnections"><RotateCcw :size="12" /> Restore</button></div>
     <div class="canvas-legend"><span><i class="config"></i> Construction inputs</span><span><i class="action"></i> Run result</span></div>

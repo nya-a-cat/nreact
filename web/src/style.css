@@ -509,8 +509,6 @@
                                                                                                                                                                                                         .vue-flow__handle[data-handleid=action],.vue-flow__handle[data-handleid=finish]{
                                                                                                                                                                                                           background:var(--pink);
                                                                                                                                                                                                           border-color:#f1cce3}
-                                                                                                                                                                                                          .vue-flow__edge.selected path{
-                                                                                                                                                                                                            stroke-width:3px}
                                                                                                                                                                                                             .trace-panel{
                                                                                                                                                                                                               height:205px;
                                                                                                                                                                                                               flex-shrink:0;
@@ -1374,7 +1372,7 @@
 .port-right { left: 19px; top: -7px; }
 .port-top { bottom: 18px; left: 50%; transform: translateX(-50%); }
 .port-bottom { top: 18px; left: 50%; transform: translateX(-50%); }
-.vue-flow__edge.selected .vue-flow__edge-path { stroke: #f4a3d3 !important; stroke-width: 3px !important; }
+
 .vue-flow__edgeupdater { cursor: crosshair; }
 .graph-context-menu { position: absolute; z-index: 30; width: 215px; padding: 5px; background: #2c2e2f; border: 1px solid #a6a292; box-shadow: 0 8px 28px #0008; border-radius: 4px; }
 .graph-context-menu button { width: 100%; justify-content: flex-start; font-size: 12px; }
@@ -1415,5 +1413,10 @@
 .graph-canvas .vue-flow__handle:hover::after,.graph-canvas .vue-flow__handle.port-picked::after { background: #d963ac; box-shadow: 0 0 0 4px #d963ac55; }
 .graph-canvas .vue-flow__handle.port-compatible::after { background: #f2e1ac; box-shadow: 0 0 0 4px #f2e1ac55; }
 .port-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 7; overflow: visible; }
-.port-preview path { fill: none; stroke: #ed97cd; stroke-width: 2; stroke-dasharray: 6 4; }.port-actions { z-index: 9; }
+.port-preview .wire-core { stroke: #ed97cd; }.port-preview path { stroke-dasharray: 8 6; }.port-actions { z-index: 9; }
 .node-icon { flex-shrink: 0; color: currentColor; }
+
+.graph-canvas .wire-outline,
+.graph-canvas .wire-core { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.graph-canvas .wire-outline { stroke: #000; stroke-width: 6px; pointer-events: none; }
+.graph-canvas .wire-core { stroke-width: 4px; }
