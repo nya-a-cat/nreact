@@ -10,7 +10,7 @@ from typing import Callable, Literal
 from ._core import Session
 from .chatgpt import ChatGPTModel
 from .control import RunCancelled, RunControl
-from .models import ChatModel
+from .models import ChatModel, ModelError
 from .types import Completion, Environment, Event, Model, Observation, Result
 
 
@@ -124,7 +124,11 @@ class Agent:
                     if not isinstance(completion, Completion) or not isinstance(completion.text, str):
                         raise TypeError("Model must return Completion or str.")
                 except Exception as exc:
-                    status, error = "model_error", f"Model call failed ({type(exc).__name__})."
+                    status = "model_error"
+                    # Built-in transports sanitize their ModelError messages. Custom
+                    # adapters can put credentials in exceptions, so keep those private.
+                    safe = type(self.model) in {ChatModel, ChatGPTModel} and isinstance(exc, ModelError)
+                    error = str(exc) if safe else f"Model call failed ({type(exc).__name__})."
                     emit("error", error)
                     break
                 for key, value in completion.usage.items():

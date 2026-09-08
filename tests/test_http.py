@@ -8,7 +8,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from nreact import ChatModel, ModelError
+from nreact import Agent, ChatModel, ModelError, ToolEnvironment
 
 
 class HTTPTests(unittest.TestCase):
@@ -64,6 +64,10 @@ class HTTPTests(unittest.TestCase):
             ChatModel("test", base_url=self.url).generate("prompt", stop=[])
         self.assertIn("401", str(raised.exception))
         self.assertNotIn("test-only-key", str(raised.exception))
+        result = Agent(ChatModel("test", base_url=self.url), ToolEnvironment([])).run("Task")
+        self.assertEqual(result.status, "model_error")
+        self.assertIn("401", result.error)
+        self.assertNotIn("test-only-key", json.dumps(result.to_dict()))
 
     def test_redirect_is_not_followed(self):
         self.status = 302
