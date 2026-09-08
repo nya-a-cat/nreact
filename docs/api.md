@@ -54,6 +54,10 @@ The `Think[text]` action is also accepted in sparse mode. Model-generated `Obser
 
 `ChatModel` sends `model`, `messages`, `temperature`, `max_tokens` and optional `stop` to `/chat/completions`. It uses a bounded HTTP read, disables redirects and bypasses proxies for loopback servers. It accepts textual `message.content`. Configure an adapter for providers with different request fields. Exceptions suppress response bodies and credential-bearing URL details.
 
+`ChatGPTModel(model, *, auth_file=None, timeout=60, stop_locally=True)` uses nreact's OpenAI OAuth cache and the fixed ChatGPT Codex Responses endpoint. It parses bounded SSE text output, requires `response.completed`, reports provider token usage and applies ReAct stop markers locally. Token refresh is automatic during use; an HTTP 401 permits one refresh/retry. `model_calls` counts calls to `generate`, including an internal authorization retry within that call. See [OpenAI authentication](authentication.md) for generation-setting differences and explicit login commands.
+
+`AuthStore(path=None).status()` reads local status without network requests; `.logout()` removes only that nreact cache. `nreact.auth.login(...)` explicitly starts browser or device authorization. These operations raise `AuthError` for authentication or credential-store failures. Constructing an `AuthStore` or `ChatGPTModel` does not read the cache or start login.
+
 ## Custom environments
 
 ```python
@@ -79,4 +83,4 @@ class Room:
 
 ## Trace format
 
-Each JSONL file contains a `start` record with schema version, configuration and prompt hash, `generation` records with raw model outputs, ordered `event` records, and a `result` record. The built-in model adapter includes endpoint and inference settings, excluding the API key. Records are flushed as they happen so a terminated process leaves its completed steps available. An interrupted or callback-failed run can have no final result record. Task/tool text is stored verbatim and can contain sensitive data.
+Each JSONL file contains a `start` record with schema version, configuration and prompt hash, `generation` records with raw model outputs, ordered `event` records, and a `result` record. Built-in adapters include their endpoint and applicable inference settings, excluding API keys and OAuth credentials. Records are flushed as they happen so a terminated process leaves its completed steps available. An interrupted or callback-failed run can have no final result record. Task/tool text is stored verbatim and can contain sensitive data.

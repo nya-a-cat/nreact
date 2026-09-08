@@ -40,6 +40,8 @@ Workspace paths are relative to the TOML file's directory. An explicit CLI `--wo
 
 ## API keys
 
+`model.auth` selects `"api_key"` (default) or `"chatgpt"`. `NREACT_AUTH` supplies the mode when the TOML field is omitted. For ChatGPT OAuth, use `nreact auth login` and select a Codex model; [OpenAI authentication](authentication.md) covers login, cache paths, token refresh and the adapter's generation settings.
+
 Use `model.api_key_env` to reference an environment variable, or save `model.api_key` directly in your local file. A saved key takes priority over the named environment variable.
 
 `nreact.toml` is ignored by this repository's Git configuration. Keep other credential-bearing TOML files out of version control too. Saved keys are local plaintext; POSIX writes use mode 0600, and Windows uses the directory's access controls. Clearing a saved key allows the configured environment variable to supply a key again.
@@ -82,3 +84,5 @@ print(result.answer)
 ```
 
 Direct construction with `Agent(...)` and `ChatModel.from_env()` remains available and does not automatically load TOML.
+
+`ChatGPTModel(model, auth_file=None, timeout=60, stop_locally=True)` is available for direct OAuth-backed construction. `model.auth_file` is optional and stores a path, with relative paths resolved beside the TOML file. OAuth tokens remain in nreact's separate credential cache.

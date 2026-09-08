@@ -13,5 +13,7 @@ runs/
 .ruff_cache/
 /nreact.toml
 .nreact/
+openai-auth.json
+openai-auth.json.lock
 web/node_modules/
 web/.vite/

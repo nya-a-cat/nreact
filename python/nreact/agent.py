@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable, Literal
 
 from ._core import Session
+from .chatgpt import ChatGPTModel
 from .control import RunCancelled, RunControl
 from .models import ChatModel
 from .types import Completion, Environment, Event, Model, Observation, Result
@@ -98,7 +99,7 @@ class Agent:
                 "max_context_chars": self.max_context_chars,
                 "max_observation_chars": self.max_observation_chars,
                 "model": getattr(self.model, "model", type(self.model).__name__),
-                "model_parameters": (self.model.trace_metadata() if isinstance(self.model, ChatModel) else {}),
+                "model_parameters": (self.model.trace_metadata() if isinstance(self.model, (ChatModel, ChatGPTModel)) else {}),
                 "prompt_sha256": hashlib.sha256(prefix.encode()).hexdigest(),
             })
             self.environment.reset()

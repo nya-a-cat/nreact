@@ -7,6 +7,7 @@ import unicodedata
 from pathlib import Path
 
 from .agent import Agent
+from ._credentials import AuthError
 from .evaluation import evaluate
 from .models import ScriptedModel
 from .config import build_agent, load_config, parse_config, save_config
@@ -48,11 +49,28 @@ def parser() -> argparse.ArgumentParser:
     ui.add_argument("--config", default="nreact.toml", help="Configuration path.")
     ui.add_argument("--port", type=int, default=8765)
     ui.add_argument("--no-browser", action="store_true")
+    auth = commands.add_parser("auth", help="Manage nreact's OpenAI OAuth credentials.")
+    auth_commands = auth.add_subparsers(dest="auth_command", required=True)
+    for action in ("login", "status", "logout"):
+        auth_command = auth_commands.add_parser(action, help={
+            "login": "Sign in with ChatGPT using OAuth.",
+            "status": "Inspect the local cache without network requests.",
+            "logout": "Clear only the nreact credential cache.",
+        }[action])
+        auth_command.add_argument("--auth-file", help="Credential cache path; defaults to NREACT_AUTH_FILE or ~/.nreact/openai-auth.json.")
+        if action == "login":
+            auth_command.add_argument("--device", "--device-auth", action="store_true", help="Use a device code instead of a localhost callback.")
+            auth_command.add_argument("--no-browser", action="store_true", help="Print the browser login URL without opening it.")
+            auth_command.add_argument("--timeout", type=float, default=900, help="Login timeout in seconds (30-900).")
+        else:
+            auth_command.add_argument("--json", action="store_true", help="Print credential-free status JSON.")
     for name in ("run", "eval"):
         command = commands.add_parser(name, help="Run an agent." if name == "run" else "Evaluate a QA JSONL dataset.")
         command.add_argument("--config", help="TOML file; automatically uses ./nreact.toml when present.")
         command.add_argument("--model", help="Override the configured model name.")
         command.add_argument("--base-url", help="Override the configured model endpoint.")
+        command.add_argument("--auth", choices=["api_key", "chatgpt"], help="Select the API-key or ChatGPT OAuth adapter.")
+        command.add_argument("--auth-file", help="Override the nreact OAuth cache path, relative to the current directory.")
         command.add_argument("--mode", choices=["dense", "sparse"])
         command.add_argument("--max-steps", type=int)
         command.add_argument("--max-tokens", type=int)
@@ -73,9 +91,43 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
+def _auth_command(arguments) -> int:
+    from .auth import AuthStore, login
+
+    store = AuthStore(arguments.auth_file)
+    if arguments.auth_command == "login":
+        def announce(url: str, code: str | None) -> None:
+            print(terminal_text(f"Open this URL to sign in with ChatGPT:\n{url}"), flush=True)
+            if code:
+                print(terminal_text(f"One-time device code: {code}"), flush=True)
+        login(auth_file=store.path, device=arguments.device, open_browser=not arguments.no_browser,
+              timeout=arguments.timeout, on_authorize=announce)
+        print(terminal_text(f"Saved nreact OpenAI credentials to {store.path}"))
+        return 0
+    if arguments.auth_command == "logout":
+        cleared = store.logout()
+        if arguments.json:
+            print(json.dumps({"cleared": cleared, "path": str(store.path)}))
+        else:
+            print("Cleared nreact OpenAI credentials." if cleared else "No nreact OpenAI credentials were cached.")
+        return 0
+    status = store.status()
+    if arguments.json:
+        print(json.dumps(status, indent=2))
+    else:
+        message = {"signed_out": "No nreact OpenAI credentials are cached.",
+                   "cached": "ChatGPT OAuth credentials are cached locally.",
+                   "refresh_required": "ChatGPT OAuth credentials are cached; refresh is required on the next model call."}
+        print(message[status["state"]])
+        print(terminal_text(f"Cache: {store.path}\nStatus is local; no request was made to OpenAI."))
+    return 1 if status["state"] == "signed_out" else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
+        if arguments.command == "auth":
+            return _auth_command(arguments)
         if arguments.command == "init":
             config = parse_config({}, arguments.config)
             save_config(config)
@@ -95,10 +147,12 @@ def main(argv: list[str] | None = None) -> int:
             config = load_config(arguments.config or "nreact.toml", missing_ok=arguments.config is None)
             data = config.to_dict()
             for flag, field in (("model", "name"), ("base_url", "base_url"), ("max_tokens", "max_tokens"),
-                                ("timeout", "timeout"), ("send_stop", "send_stop")):
+                                ("timeout", "timeout"), ("send_stop", "send_stop"), ("auth", "auth")):
                 value = getattr(arguments, flag)
                 if value is not None:
                     data["model"][field] = value
+            if arguments.auth_file is not None:
+                data["model"]["auth_file"] = str(Path(arguments.auth_file).expanduser().absolute())
             for flag in ("mode", "max_steps", "paper"):
                 value = getattr(arguments, flag)
                 if value is not None:
@@ -120,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             print(terminal_text(result.answer or f"Stopped: {result.status}"))
             print(f"{result.status}; {result.model_calls} model calls; {result.steps} steps", file=sys.stderr)
         return 0 if result.status in {"finished", "environment_done"} else 1
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, AuthError) as exc:
         print(terminal_text(f"nreact: {exc}"), file=sys.stderr)
         return 2
     except KeyboardInterrupt:

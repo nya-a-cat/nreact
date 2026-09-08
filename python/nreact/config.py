@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 from .agent import Agent
+from .chatgpt import ChatGPTModel
 from .models import ChatModel
 from .paper import paper_examples
 from .tools import Tool, ToolEnvironment, workspace_tools
@@ -37,6 +38,8 @@ class ModelSettings:
     temperature: float = 0.0
     timeout: float = 60.0
     send_stop: bool = True
+    auth: str = "api_key"
+    auth_file: str = ""
 
 
 @dataclass
@@ -115,6 +118,7 @@ def parse_config(data: dict, path: str | Path = "nreact.toml", *, use_environmen
     if use_environment:
         defaults.name = os.getenv("NREACT_MODEL", "")
         defaults.base_url = os.getenv("NREACT_BASE_URL", defaults.base_url)
+        defaults.auth = os.getenv("NREACT_AUTH", defaults.auth)
     model = ModelSettings(**{**asdict(defaults), **_table(data, "model", set(asdict(defaults)))})
     agent = AgentSettings(**_table(data, "agent", set(asdict(AgentSettings()))))
     tool_data = _table(data, "tools", {"wikipedia", "workspace", "custom"})
@@ -126,6 +130,10 @@ def parse_config(data: dict, path: str | Path = "nreact.toml", *, use_environmen
     _string(model.base_url, "model.base_url", empty=False)
     _string(model.api_key, "model.api_key", 16_384)
     _string(model.api_key_env, "model.api_key_env", 128)
+    _string(model.auth, "model.auth", 32, empty=False)
+    _string(model.auth_file, "model.auth_file")
+    if model.auth not in {"api_key", "chatgpt"}:
+        raise ValueError("model.auth must be api_key or chatgpt.")
     if model.api_key_env and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", model.api_key_env):
         raise ValueError("model.api_key_env must be an environment-variable name.")
     _number(model.max_tokens, "model.max_tokens", 1, 131_072, integer=True)
@@ -296,9 +304,14 @@ def build_agent(config: Config) -> Agent:
     config = parse_config(config.to_dict(), config.path, use_environment=False)
     if not config.model.name.strip():
         raise ValueError("Set model.name in the configuration or NREACT_MODEL in the environment.")
-    model = ChatModel(config.model.name, base_url=config.model.base_url, api_key=config.api_key(),
-                      timeout=config.model.timeout, max_tokens=config.model.max_tokens,
-                      temperature=config.model.temperature, send_stop=config.model.send_stop)
+    if config.model.auth == "chatgpt":
+        auth_file = config.path.parent / Path(config.model.auth_file).expanduser() if config.model.auth_file else None
+        model = ChatGPTModel(config.model.name, auth_file=auth_file, timeout=config.model.timeout,
+                             stop_locally=config.model.send_stop)
+    else:
+        model = ChatModel(config.model.name, base_url=config.model.base_url, api_key=config.api_key(),
+                          timeout=config.model.timeout, max_tokens=config.model.max_tokens,
+                          temperature=config.model.temperature, send_stop=config.model.send_stop)
     return Agent(model, ConfiguredEnvironment(config), mode=config.agent.mode,
                  examples=paper_examples(config.agent.paper) if config.agent.paper else "",
                  max_steps=config.agent.max_steps, max_context_chars=config.agent.max_context_chars,

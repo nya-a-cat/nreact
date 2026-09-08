@@ -10,7 +10,7 @@ Give an agent a model and tools. It reasons about the task, calls a tool, reads 
 
 - **ReAct reasoning:** thoughts and actions can alternate on every turn or occur as needed.
 - **Custom tools:** connect Python functions, local files, or your own interactive environment.
-- **Model adapters:** use an OpenAI-compatible endpoint or implement the small `Model` interface.
+- **Model adapters:** use an OpenAI-compatible endpoint, ChatGPT OAuth, or the small `Model` interface.
 - **Run records:** save thoughts, actions, observations, token usage and termination status as JSONL.
 - **Local workbench:** edit TOML, inspect the agent graph, execute one turn at a time and browse saved runs in a Vue interface.
 
@@ -35,6 +35,15 @@ uv run nreact init
 ```
 
 Edit the model and tool settings in `nreact.toml`. The CLI automatically reads that file; use `--config path/to/config.toml` to choose another. See [TOML configuration](docs/configuration.md) for the file format and custom tools.
+
+### ChatGPT authentication
+
+```sh
+uv run nreact auth login
+uv run nreact auth status
+```
+
+Set `model.auth = "chatgpt"` and choose a Codex model available to your account. Use `auth login --device` for device-code authorization and `auth logout` to clear nreact's credentials. The backend uses its own credential cache and refreshes tokens during model calls. See [OpenAI authentication](docs/authentication.md) for storage, configuration and generation settings.
 
 ### Local workbench
 
@@ -109,6 +118,7 @@ This release implements the agent loop. The paper's benchmark scores and finetun
 ## Documentation
 
 - [Configuration](docs/configuration.md): TOML and custom tool registration.
+- [OpenAI authentication](docs/authentication.md): ChatGPT OAuth and credential management.
 - [Usage guide](docs/usage.md): model setup, command-line options and traces.
 - [API reference](docs/api.md): agents, tools, models, environments and results.
 - [Reproduction notes](docs/reproduction.md): paper prompts, evaluation and implementation details.
