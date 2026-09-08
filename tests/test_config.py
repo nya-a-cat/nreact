@@ -59,7 +59,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_init_does_not_overwrite_and_revision_changes(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "nreact.toml"
+            path = Path(directory) / "new" / "nested" / "nreact.toml"
             config = parse_config({}, path, use_environment=False)
             self.assertEqual(revision(path), "missing")
             save_config(config)
@@ -70,7 +70,7 @@ class ConfigTests(unittest.TestCase):
             save_config(config, overwrite=True)
             self.assertNotEqual(revision(path), before)
             self.assertEqual(load_config(path).model.name, "new-model")
-            self.assertEqual(list(Path(directory).glob(".nreact-*.tmp")), [])
+            self.assertEqual(list(path.parent.glob(".nreact-*.tmp")), [])
             if os.name != "nt":
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 

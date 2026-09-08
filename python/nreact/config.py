@@ -234,6 +234,7 @@ def save_config(config: Config, *, overwrite: bool = False) -> None:
     path = config.path
     if path.is_symlink():
         raise ValueError("Saving through a configuration symlink is unsupported.")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if not overwrite:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as writer:
