@@ -1,7 +1,7 @@
 <script setup>
 import { Handle, Position } from '@vue-flow/core'
 defineProps({ data: Object, selected: Boolean })
-const emit = defineEmits(['disconnect-port', 'edit', 'inspect'])
+const emit = defineEmits(['disconnect-port', 'port-click', 'edit', 'inspect'])
 const change = (field, event) => emit('edit', field.path, field.kind === 'boolean' ? event.target.checked : field.kind === 'number' ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value)
 function updateTool(field, index, key, value) { emit('edit', field.path, field.value.map((tool, i) => i === index ? { ...tool, [key]: value } : tool)) }
 function addTool(field) {
@@ -39,6 +39,6 @@ function addTool(field) {
       <template v-if="data.result"><dl><template v-for="name in ['status', 'steps', 'model_calls', 'elapsed_seconds', 'reward']" :key="name"><dt>{{ name }}</dt><dd>{{ name === 'elapsed_seconds' ? Number(data.result[name]).toFixed(3) + ' s' : data.result[name] ?? '—' }}</dd></template></dl><pre>{{ data.result.answer ?? 'No final answer' }}</pre><p v-if="data.result.error" class="error-text">{{ data.result.error }}</p><small>usage {{ JSON.stringify(data.result.usage || {}) }}</small></template>
       <p v-else>No run result</p>
     </div>
-    <Handle v-for="port in data.ports" :id="port.id" :key="`${port.direction}-${port.id}`" :type="port.direction" :position="port.side === 'left' ? Position.Left : Position.Right" :connectable="!data.readOnly" :title="`${port.id}: ${port.type} · right-click to disconnect`" :style="{ top: `${port.offset}px` }" @contextmenu.prevent.stop="emit('disconnect-port', port.id)" />
+    <Handle v-for="port in data.ports" :id="port.id" :key="`${port.direction}-${port.id}`" :type="port.direction" :position="port.side === 'left' ? Position.Left : Position.Right" :connectable="!data.readOnly" :class="{ 'port-picked': data.pendingPort?.nodeId === data.id && data.pendingPort?.handleId === port.id, 'port-compatible': data.pendingPort && data.pendingPort.nodeId !== data.id && data.pendingPort.type === port.type && data.pendingPort.direction !== port.direction }" :title="`${port.id}: ${port.type} · click or drag to connect`" @click.stop="emit('port-click', port.id, $event)" :style="{ top: `${port.offset}px` }" @contextmenu.prevent.stop="emit('disconnect-port', port.id)" />
   </article>
 </template>

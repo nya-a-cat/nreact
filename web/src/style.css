@@ -1410,3 +1410,9 @@
 .graph-canvas .node-subtitle { letter-spacing: 0; }
 .graph-canvas .workflow-node header { height: 36px; box-sizing: border-box; }
 .graph-canvas .node-properties { min-height: 20px; height: 20px; }
+.graph-canvas .vue-flow__handle { width: 22px; height: 22px; background: transparent; border: 0; box-shadow: none; cursor: crosshair; }
+.graph-canvas .vue-flow__handle::after { content: ''; position: absolute; inset: 5px; border: 1px solid #fff1c4; border-radius: 50%; background: #b9b29b; pointer-events: none; }
+.graph-canvas .vue-flow__handle:hover::after,.graph-canvas .vue-flow__handle.port-picked::after { background: #d963ac; box-shadow: 0 0 0 4px #d963ac55; }
+.graph-canvas .vue-flow__handle.port-compatible::after { background: #f2e1ac; box-shadow: 0 0 0 4px #f2e1ac55; }
+.port-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 7; overflow: visible; }
+.port-preview path { fill: none; stroke: #ed97cd; stroke-width: 2; stroke-dasharray: 6 4; }.port-actions { z-index: 9; }

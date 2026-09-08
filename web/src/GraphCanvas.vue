@@ -10,9 +10,23 @@ const emit = defineEmits(['select', 'ready', 'edit'])
 const nodes = ref([]), edges = ref([]), canvas = ref(null)
 const selectedEdge = ref(null), context = ref(null), feedback = ref(''), missing = ref([])
 const undoStack = ref([]), redoStack = ref([])
+const pendingPort = ref(null), pointer = ref(null), portError = ref('')
+let dragStart = null, ignoreClickUntil = 0
 const { fitView, zoomIn, zoomOut, viewport } = useVueFlow()
 let positions = {}, connections = null, updatingEdge = null, connectionAdded = false, messageTimer
 const zoom = computed(() => Math.round(viewport.value.zoom * 100))
+const pendingLinks = computed(() => pendingPort.value ? edges.value.filter(edge => edge.source === pendingPort.value.nodeId && edge.sourceHandle === pendingPort.value.handleId || edge.target === pendingPort.value.nodeId && edge.targetHandle === pendingPort.value.handleId) : [])
+const preview = computed(() => {
+  if (!pendingPort.value || !pointer.value) return ''
+  const { nodeId, handleId } = pendingPort.value
+  const handle = canvas.value?.querySelector(`.vue-flow__node[data-id="${nodeId}"] .vue-flow__handle[data-handleid="${handleId}"]`)
+  if (!handle) return ''
+  const rect = handle.getBoundingClientRect(), bounds = canvas.value.getBoundingClientRect()
+  const x = rect.x + rect.width / 2 - bounds.x, y = rect.y + rect.height / 2 - bounds.y
+  const end = pointer.value, bend = Math.max(45, Math.abs(end.x - x) / 2) * (port(nodeId, handleId)?.direction === 'source' ? 1 : -1)
+  if (Math.hypot(end.x - x, end.y - y) < 8) return ''
+  return `M ${x} ${y} C ${x + bend} ${y}, ${end.x - bend} ${end.y}, ${end.x} ${end.y}`
+})
 const defaults = () => workflow(props.config, props.task, props.result, props.event, props.schema)
 const link = edge => ({ source: edge.source, target: edge.target, sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle })
 const identity = edge => `${edge.source}:${edge.sourceHandle}->${edge.target}:${edge.targetHandle}`
@@ -26,7 +40,40 @@ function valid(connection) {
   // Vue Flow also validates already-created edges during setEdges. Their own
   // occupied input must not invalidate them when a different wire is edited.
   if (connection.id) return true
-  return !props.readOnly && !edges.value.some(edge => edge.id !== updatingEdge && edge.target === connection.target && edge.targetHandle === connection.targetHandle)
+  return !props.readOnly
+}
+function cancelPort() { pendingPort.value = null; pointer.value = null; portError.value = ''; refreshNodes() }
+function movePointer(event) { if (pendingPort.value) { const bounds = canvas.value.getBoundingClientRect(); pointer.value = { x: event.clientX - bounds.x, y: event.clientY - bounds.y } } }
+function clickPort(nodeId, handleId, event) {
+  if (performance.now() < ignoreClickUntil) return
+  if (props.readOnly) { notify('Run snapshot: open the working copy to edit connections.'); return }
+  const clicked = port(nodeId, handleId), pending = pendingPort.value
+  if (pending) {
+    if (pending.nodeId === nodeId && pending.handleId === handleId) { cancelPort(); return }
+    const start = port(pending.nodeId, pending.handleId)
+    const connection = start.direction === 'source'
+      ? { source: pending.nodeId, sourceHandle: pending.handleId, target: nodeId, targetHandle: handleId }
+      : { source: nodeId, sourceHandle: handleId, target: pending.nodeId, targetHandle: pending.handleId }
+    if (clicked.direction !== start.direction && valid(connection)) { connect(connection); cancelPort(); return }
+    portError.value = `Incompatible port. Choose a ${start.label} ${start.direction === 'source' ? 'input' : 'output'}.`; return
+  }
+  selectedEdge.value = null; context.value = null
+  portError.value = ''
+  pendingPort.value = { nodeId, handleId, type: clicked.label, direction: clicked.direction }
+  movePointer(event); refreshNodes(); canvas.value.focus()
+}
+function startDrag({ nodeId, handleId, event }) {
+  connectionAdded = false; context.value = null
+  dragStart = { nodeId, handleId, x: event.clientX, y: event.clientY }
+}
+function endDrag(event) {
+  const start = dragStart; dragStart = null
+  if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) < 4) return
+  ignoreClickUntil = performance.now() + 250; cancelPort()
+  if (connectionAdded || props.readOnly) return
+  const hit = document.elementFromPoint(event.clientX, event.clientY)
+  if (port(start.nodeId, start.handleId)?.direction === 'target' && !hit?.closest('.vue-flow__node')) disconnectPort(start.nodeId, start.handleId)
+  else notify('Drop on a matching port, or click two ports to connect.')
 }
 function save() {
   try {
@@ -56,7 +103,7 @@ function refreshNodes() {
     position: existing.get(node.id)?.position || positions[node.id] || node.position,
     draggable: true, connectable: !props.readOnly,
     selected: !selectedEdge.value && props.selected === node.id,
-    data: { ...node.data, readOnly: props.readOnly, editLocked: props.editLocked },
+    data: { ...node.data, readOnly: props.readOnly, editLocked: props.editLocked, pendingPort: pendingPort.value },
   }))
   renderEdges()
 }
@@ -71,6 +118,7 @@ watch(() => props.storageKey, key => {
 }, { immediate: true })
 watch(() => [props.config, props.task, props.result, props.schema, props.editLocked, props.event, props.selected, props.readOnly], refreshNodes, { deep: true })
 watch(() => props.layers, renderEdges, { deep: true })
+watch(() => props.readOnly, cancelPort)
 
 function edit(next, message) {
   if (props.readOnly) { notify('Open the working copy to edit connections.'); return }
@@ -82,7 +130,9 @@ function edit(next, message) {
 function connect(connection) {
   if (!valid(connection)) return
   connectionAdded = true
-  edit([...(connections ?? defaults().edges.map(link)), connection], 'Connection added · saved locally')
+  const current = connections ?? defaults().edges.map(link)
+  if (current.some(edge => identity(edge) === identity(connection))) { notify('These ports are already connected.'); return }
+  edit([...current.filter(edge => edge.target !== connection.target || edge.targetHandle !== connection.targetHandle), connection], 'Connection added · saved locally')
 }
 function updateConnection({ edge, connection }) {
   if (!valid(connection)) return
@@ -116,7 +166,7 @@ function edgeMenu({ edge, event }) {
   const bounds = canvas.value.getBoundingClientRect()
   context.value = { x: Math.min(event.clientX - bounds.left, bounds.width - 220), y: Math.min(event.clientY - bounds.top, bounds.height - 100) }
 }
-function paneClick() { selectedEdge.value = null; context.value = null; renderEdges(); canvas.value.focus() }
+function paneClick() { cancelPort(); selectedEdge.value = null; context.value = null; renderEdges(); canvas.value.focus() }
 function restoreConnections() { edit(defaults().edges.map(link), 'Default connections restored') }
 function reset() {
   positions = {}; nodes.value = defaults().nodes.map(node => ({ ...node, selected: props.selected === node.id, data: { ...node.data, readOnly: props.readOnly, editLocked: props.editLocked } }))
@@ -124,7 +174,7 @@ function reset() {
 }
 function keyboard(event) {
   if (event.target.closest('input,textarea,select,button,[contenteditable]')) return
-  if (event.key === 'Escape') { context.value = null; selectedEdge.value = null; renderEdges(); return }
+  if (event.key === 'Escape') { cancelPort(); context.value = null; selectedEdge.value = null; renderEdges(); return }
   if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) {
     event.preventDefault(); event.stopPropagation()
     event.key.toLowerCase() === 'y' || event.shiftKey ? redo() : undo(); return
@@ -147,21 +197,21 @@ onUnmounted(() => { observer?.disconnect(); clearTimeout(resizeTimer); clearTime
 </script>
 
 <template>
-  <div ref="canvas" class="graph-canvas" tabindex="0" aria-label="Workflow canvas" @keydown.capture="keyboard">
+  <div ref="canvas" class="graph-canvas" tabindex="0" aria-label="Workflow canvas" @keydown.capture="keyboard" @pointermove="movePointer">
     <div class="canvas-caption"><span class="tiny-square"></span>{{ readOnly ? 'Run graph · view only' : 'Editable graph' }}</div>
     <div class="canvas-tools">
       <button title="Undo connection change (Ctrl Z)" aria-label="Undo connection change" :disabled="readOnly || !undoStack.length" @click="undo"><Undo2 :size="14" /></button>
       <button title="Redo connection change (Ctrl Shift Z)" aria-label="Redo connection change" :disabled="readOnly || !redoStack.length" @click="redo"><Redo2 :size="14" /></button>
       <button title="Zoom out" aria-label="Zoom out" @click="zoomOut()"><Minus :size="14" /></button><span>{{ zoom }}%</span><button title="Zoom in" aria-label="Zoom in" @click="zoomIn()"><Plus :size="14" /></button><button title="Fit graph (F)" aria-label="Fit graph" @click="fitView({ padding: .17 })"><Maximize :size="14" /></button>
     </div>
-    <VueFlow v-model:nodes="nodes" v-model:edges="edges" :nodes-draggable="true" :nodes-connectable="!readOnly" :edges-updatable="!readOnly" :is-valid-connection="valid" :connect-on-click="false" :edge-updater-radius="14" :node-drag-threshold="3" :delete-key-code="null" :min-zoom=".3" :max-zoom="1.6" :fit-view-on-init="true" :fit-view-params="{ padding: .17 }" :zoom-on-double-click="false" @node-click="selectNode"  @node-drag-stop="remember" @edge-click="selectConnection" @edge-context-menu="edgeMenu" @pane-click="paneClick" @connect="connect" @connect-start="connectionAdded = false; context = null" @connect-end="!connectionAdded && !readOnly && notify('Drag an output to an unused input with the same type.')" @edge-update-start="updatingEdge = $event.edge.id; connectionAdded = false" @edge-update="updateConnection" @edge-update-end="updatingEdge = null">
-      <template #node-workbench="nodeProps"><WorkflowNode v-bind="nodeProps" @disconnect-port="disconnectPort(nodeProps.id, $event)" @edit="(path, value) => emit('edit', path, value)" @inspect="emit('select', nodeProps.id, true)" /></template>
+    <VueFlow v-model:nodes="nodes" v-model:edges="edges" :nodes-draggable="true" :nodes-connectable="!readOnly" :edges-updatable="!readOnly" :is-valid-connection="valid" :connect-on-click="false" :edge-updater-radius="14" :node-drag-threshold="3" :delete-key-code="null" :min-zoom=".3" :max-zoom="1.6" :fit-view-on-init="true" :fit-view-params="{ padding: .17 }" :zoom-on-double-click="false" @node-click="selectNode"  @node-drag-stop="remember" @edge-click="selectConnection" @edge-context-menu="edgeMenu" @pane-click="paneClick" @connect="connect" @connect-start="startDrag" @connect-end="endDrag" @edge-update-start="updatingEdge = $event.edge.id; connectionAdded = false" @edge-update="updateConnection" @edge-update-end="updatingEdge = null">
+      <template #node-workbench="nodeProps"><WorkflowNode v-bind="nodeProps" @disconnect-port="disconnectPort(nodeProps.id, $event); cancelPort()" @port-click="(handleId, event) => clickPort(nodeProps.id, handleId, event)" @edit="(path, value) => emit('edit', path, value)" @inspect="emit('select', nodeProps.id, true)" /></template>
     </VueFlow>
     <div v-if="context" class="graph-context-menu" :style="{ left: `${context.x}px`, top: `${context.y}px` }"><button :disabled="readOnly" @click="removeConnection()"><Trash2 :size="14" /> Delete connection <kbd>Del</kbd></button><button @click="context = null">Cancel</button></div>
-    <div v-if="selectedEdge" class="connection-selection"><span>Connection selected</span><button :disabled="readOnly" @click="removeConnection()"><Trash2 :size="13" /> Disconnect</button><small v-if="!readOnly">Drag either end to reconnect</small></div>
+    <svg v-if="preview" class="port-preview"><path :d="preview" /></svg><div v-if="pendingPort" class="graph-feedback port-actions" role="status"><span>{{ portError || `${pendingPort.nodeId}.${pendingPort.handleId} · Click a ${pendingPort.type} ${pendingPort.direction === 'source' ? 'input' : 'output'}` }}</span><button v-if="pendingLinks.length" @click="disconnectPort(pendingPort.nodeId, pendingPort.handleId); cancelPort()">Disconnect port</button><button @click="cancelPort">Cancel · Esc</button></div><div v-else-if="selectedEdge" class="connection-selection"><span>Connection selected</span><button :disabled="readOnly" @click="removeConnection()"><Trash2 :size="13" /> Disconnect</button><small v-if="!readOnly">Drag either end to reconnect</small></div>
     <div v-else-if="feedback" class="graph-feedback" role="status">{{ feedback }}</div>
     <div v-else-if="missing.length && !readOnly" class="graph-feedback graph-incomplete"><span>Connect {{ missing.join(', ') }} before running.</span><button @click="restoreConnections"><RotateCcw :size="12" /> Restore</button></div>
     <div class="canvas-legend"><span><i class="config"></i> Construction inputs</span><span><i class="action"></i> Run result</span></div>
-    <div class="graph-gesture-hint">Drag nodes · Drag ports to connect · Select wire + Delete · Use ⋯ for properties</div>
+    <div class="graph-gesture-hint">Drag nodes · Click or drag ports to connect · Select wire + Delete · Use ⋯ for properties</div>
   </div>
 </template>
