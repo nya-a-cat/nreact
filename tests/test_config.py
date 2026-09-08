@@ -17,6 +17,7 @@ from nreact.config import (
 class ConfigTests(unittest.TestCase):
     def test_toml_roundtrip_and_escaping(self):
         data = {
+            "ui": {"theme": "graphite"},
             "model": {"name": "test", "api_key": 'test-"key"-only'},
             "tools": {"wikipedia": False, "workspace": "C:\\资料\\workspace",
                       "custom": [{"name": "stock", "description": 'Look up "stock".', "callable": "my_tools:stock"}]},
@@ -25,6 +26,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(parse_config(tomllib.loads(dumps_config(config)), use_environment=False).to_dict(), config.to_dict())
         self.assertNotIn('test-"key"-only', repr(config))
         self.assertNotIn("api_key", config.public_dict()["model"])
+        self.assertEqual(config.public_dict()["ui"]["theme"], "graphite")
+        self.assertEqual(parse_config({}, use_environment=False).ui.theme, "classic")
 
     def test_environment_fallback_and_file_precedence(self):
         with patch.dict(os.environ, {"NREACT_MODEL": "env-model", "NREACT_BASE_URL": "https://env.example/v1"}):
@@ -44,6 +47,8 @@ class ConfigTests(unittest.TestCase):
     def test_invalid_configuration(self):
         cases = [
             {"unknown": {}}, {"model": {"unknown": True}}, {"model": {"timeout": True}},
+            {"ui": "graphite"}, {"ui": {"unknown": True}}, {"ui": {"theme": "missing"}},
+            {"ui": {"theme": []}}, {"ui": {"theme": ""}},
             {"model": {"max_tokens": 0}}, {"model": {"api_key": "key\r\nheader"}},
             {"model": {"temperature": float("nan")}}, {"model": {"base_url": "http://remote.example/v1"}},
             {"agent": {"mode": "other"}}, {"agent": {"mode": []}}, {"agent": {"max_steps": 0}},

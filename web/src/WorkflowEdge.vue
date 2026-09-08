@@ -10,7 +10,7 @@ const props = defineProps({
   zoom: { type: Number, default: 1 },
 })
 const path = computed(() => getBezierPath(props)[0])
-const color = computed(() => props.preview ? '#ed97cd' : props.selected ? '#f4a3d3' : props.data?.layer === 'action' ? '#cf559e' : '#a6a292')
+const color = computed(() => `var(--wire-${props.preview ? 'preview' : props.selected ? 'selected' : props.data?.layer === 'action' ? 'action' : 'config'})`)
 </script>
 
 <template>

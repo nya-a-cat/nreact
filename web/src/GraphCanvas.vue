@@ -92,7 +92,7 @@ function renderEdges() {
     return { ...(base || standard[0]), ...connection, id: identity(connection), label: undefined,
       data: { layer }, hidden: !props.layers[layer], selected: selectedEdge.value === identity(connection),
       updatable: !props.readOnly, selectable: true, interactionWidth: 24,
-      style: { stroke: layer === 'action' ? '#cf559e' : '#a6a292', strokeWidth: 4 },
+      style: { stroke: `var(--wire-${layer})`, strokeWidth: 4 },
     }
   })
   missing.value = standard.filter(edge => !current.some(connection => identity(connection) === identity(edge))).map(edge => `${edge.target}.${edge.targetHandle}`)

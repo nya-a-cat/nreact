@@ -71,19 +71,27 @@ class WebTests(unittest.TestCase):
 
     def test_property_and_toml_save_preserve_keys_and_reject_stale_writes(self):
         snapshot = self.data('/api/config')
+        self.assertEqual(snapshot['config']['ui']['theme'], 'classic')
         snapshot['config']['model'].update(name='fixture', api_key='fixture-secret')
         saved = self.data('/api/config', {"config": snapshot['config'], "revision": snapshot['revision'], "api_key_action": "replace"})
         self.assertNotIn('fixture-secret', json.dumps(saved))
         self.assertEqual(saved['key_status'], 'saved')
         self.assertEqual(self.request('/api/config', {"config": snapshot['config'], "revision": snapshot['revision']})[0], 409)
-        changed = self.data('/api/config', {"toml": saved['toml'].replace('max_steps = 20', 'max_steps = 7'), "revision": saved['revision']})
+        changed_toml = saved['toml'].replace('max_steps = 20', 'max_steps = 7').replace('theme = "classic"', 'theme = "graphite"')
+        changed = self.data('/api/config', {"toml": changed_toml, "revision": saved['revision']})
         self.assertEqual(changed['config']['agent']['max_steps'], 7)
+        self.assertEqual(changed['config']['ui']['theme'], 'graphite')
+        self.assertEqual(self.data('/api/config')['config']['ui']['theme'], 'graphite')
         self.assertIn('fixture-secret', self.path.read_text())
+        invalid_theme = changed['toml'].replace('theme = "graphite"', 'theme = "missing"')
+        self.assertEqual(self.request('/api/config', {"toml": invalid_theme, "revision": changed['revision']})[0], 400)
+        self.assertEqual(self.data('/api/config')['revision'], changed['revision'])
         self.assertEqual(self.request('/api/config', {"toml": '[model\nsecret', "revision": changed['revision']})[0], 400)
         self.assertEqual(self.request('/api/config', {"toml": '[model]\napi_key = "hidden"', "revision": changed['revision']})[0], 400)
         cleared = self.data('/api/config', {"config": changed['config'], "revision": changed['revision'], "api_key_action": "clear"})
         self.assertNotIn('fixture-secret', self.path.read_text())
         self.assertNotIn('api_key', cleared['config']['model'])
+        self.assertEqual(cleared['config']['ui']['theme'], 'graphite')
 
     def test_demo_step_control_and_persistent_history(self):
         self.assertEqual(self.request('/api/run', {"task": 'task', "revision": 'missing'})[0], 409)

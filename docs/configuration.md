@@ -38,6 +38,19 @@ uv run nreact run "Read README.md and summarize the project."
 
 Workspace paths are relative to the TOML file's directory. An explicit CLI `--workspace` is relative to the current working directory and selects local file tools instead of Wikipedia. Within TOML, Wikipedia and workspace tools can be enabled together.
 
+## Interface theme
+
+Select the workbench colors in the same configuration file:
+
+```toml
+[ui]
+theme = "graphite"
+```
+
+`graphite` uses charcoal panels and nodes, dark input fields, warm gold connections and magenta accents. `classic` retains the original warm gray nodes and cream input fields. Files without `ui.theme` use `classic`; other theme names are rejected.
+
+Saving a theme change in the workbench's TOML editor applies it immediately. After editing the file externally, use **File → Reload from disk** or refresh the page. Opening a saved run keeps the working configuration's theme. Theme selection does not affect agent execution.
+
 ## API keys
 
 `model.auth` selects `"api_key"` (default) or `"chatgpt"`. `NREACT_AUTH` supplies the mode when the TOML field is omitted. For ChatGPT OAuth, use `nreact auth login` and select a Codex model; [OpenAI authentication](authentication.md) covers login, cache paths, token refresh and the adapter's generation settings.

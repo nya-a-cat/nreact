@@ -1,0 +1,169 @@
+/* Shared connection colors keep edges, previews and legends in sync. */
+:root {
+  --wire-config: #a6a292;
+  --wire-action: #cf559e;
+  --wire-selected: #f4a3d3;
+  --wire-preview: #ed97cd;
+}
+
+.port-preview .wire-core { stroke: var(--wire-preview); }
+
+:root[data-theme="graphite"] {
+  --bg: #1c1f1e;
+  --panel: #232625;
+  --line: #3b403d;
+  --warm: #b8b29e;
+  --cream: #e5c88e;
+  --pink: #ba0b78;
+  --muted: #a5aaa4;
+  --surface-raised: #2b2e2c;
+  --surface-input: #1e211f;
+  --text: #e3e6df;
+  --text-secondary: #b9beb6;
+  --control-border: #474d47;
+  --node-border: #686e61;
+  --selection: #ba0b7826;
+  --wire-config: #d9c391;
+  --wire-action: #edcf92;
+  --wire-selected: #f28bc7;
+  --wire-preview: #f28bc7;
+  color: var(--text);
+  background: var(--bg);
+  scrollbar-color: #555c54 var(--bg);
+}
+
+/* Workbench chrome and docked panels. */
+[data-theme="graphite"] :is(.workbench, .workspace, .center-pane, .workspace-tabs) {
+  background: var(--bg);
+  color: var(--text);
+}
+
+[data-theme="graphite"] :is(.menubar, .icon-rail, .statusbar, .library-footer) {
+  background: #191c1b;
+  border-color: var(--line);
+  color: var(--text-secondary);
+}
+
+[data-theme="graphite"] :is(.library, .inspector, .trace-panel, .outliner, .source-editor, .properties, .event-inspector) {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+[data-theme="graphite"] :is(.panel-heading, .library > .panel-heading, .library-groups h2, .trace-heading, .inspector-tabs, .property-title, .event-columns) {
+  background: var(--surface-raised);
+  border-color: var(--line);
+  color: var(--text-secondary);
+}
+
+[data-theme="graphite"] :is(.document-tab, .workspace-tabs > button:first-child) {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--text);
+}
+
+[data-theme="graphite"] .document-tab { border-bottom-color: var(--bg); }
+[data-theme="graphite"] .workspace-tabs > button:first-child { border-top-color: var(--pink); }
+
+[data-theme="graphite"] :is(.trace-tabs, .inspector-tabs) button.active {
+  background: var(--bg);
+  color: var(--text);
+  border-top-color: var(--pink);
+}
+
+[data-theme="graphite"] :is(.dropdown, .graph-context-menu, .help-dialog, .canvas-tools) {
+  background: var(--panel);
+  border-color: var(--control-border);
+  color: var(--text);
+}
+
+[data-theme="graphite"] :is(.dropdown a, .panel-heading button, .icon-rail button, .help-dialog li) { color: var(--text); }
+[data-theme="graphite"] :is(.snapshot-label, .component-item small, .library-footer p, .library-footer small, .field-help, .help-dialog p, .source-info, .run-list p, .run-list small, .run-list time, .graph-gesture-hint, .outliner > button > .mono) { color: var(--muted); }
+[data-theme="graphite"] :is(.statusbar strong, .run-list-title, .trace-empty strong) { color: var(--text); }
+[data-theme="graphite"] :is(.statusbar > span:last-child, .tool-form, fieldset h3, .event-inspector h3) { border-color: var(--line); }
+[data-theme="graphite"] :is(.eyebrow, .trace-empty) { color: var(--text-secondary); }
+[data-theme="graphite"] .status-dot { background: #9dab75; }
+[data-theme="graphite"] .status-dot.live { background: var(--wire-selected); }
+
+/* Controls use the same dark surface on the canvas and in the inspector. */
+[data-theme="graphite"] :is(input, select, textarea, .search-field, .node-widgets input, .node-widgets select, .node-widgets textarea, .node-tool-list button, .node-result pre, .event-inspector > pre) {
+  background: var(--surface-input);
+  color: var(--text);
+  border-color: var(--control-border);
+}
+
+[data-theme="graphite"] .search-field input { background: transparent; }
+[data-theme="graphite"] :is(input, textarea)::placeholder { color: #858d83; }
+[data-theme="graphite"] input[type="checkbox"] { accent-color: var(--pink); }
+[data-theme="graphite"] fieldset label { color: var(--text-secondary); }
+[data-theme="graphite"] .source-editor textarea { color: #d6d9ce; }
+[data-theme="graphite"] :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--wire-selected);
+  outline-offset: 2px;
+}
+
+[data-theme="graphite"] button.outline { background: #ffffff03; border-color: var(--control-border); }
+[data-theme="graphite"] button.primary { background: var(--pink); border-color: #d12d93; color: #fff; }
+[data-theme="graphite"] button.primary:hover:not(:disabled) { background: #ce1688; }
+[data-theme="graphite"] :is(button.active, .chosen) { background: var(--selection); }
+[data-theme="graphite"] .icon-rail button.active { color: var(--wire-selected); }
+[data-theme="graphite"] .icon-rail button.active::before { background: var(--pink); }
+[data-theme="graphite"] .component-item.chosen { border-left-color: var(--pink); }
+[data-theme="graphite"] .outliner > button.chosen { background: var(--selection); }
+[data-theme="graphite"] .outliner > button.chosen > .mono { color: var(--wire-selected); }
+[data-theme="graphite"] .event-list > button.chosen { background: var(--selection); box-shadow: inset 2px 0 var(--pink); }
+[data-theme="graphite"] .active-run-link { color: var(--text); border-color: #864866; background: var(--selection); }
+[data-theme="graphite"] .text-button { color: var(--wire-selected); }
+
+/* Charcoal cards, restrained headers and warm metal-colored ports. */
+[data-theme="graphite"] .graph-canvas {
+  background-color: var(--bg);
+  background-image: radial-gradient(#6d756838 .7px, transparent .7px);
+  border-color: var(--line);
+}
+
+[data-theme="graphite"] :is(.canvas-caption, .canvas-legend) {
+  background: #1c1f1eea;
+  color: var(--text-secondary);
+  border-color: var(--line);
+}
+
+[data-theme="graphite"] .tiny-square { border-color: var(--cream); }
+[data-theme="graphite"] i.config { border-color: var(--wire-config); }
+[data-theme="graphite"] i.action { border-color: var(--wire-action); }
+
+[data-theme="graphite"] .graph-canvas .workflow-node {
+  background: #252826;
+  color: var(--text);
+  border-color: var(--node-border);
+  box-shadow: 0 3px 10px #0004;
+}
+
+[data-theme="graphite"] .graph-canvas .workflow-node header,
+[data-theme="graphite"] .graph-canvas .workflow-node.selected header {
+  background: linear-gradient(#30332f, #292c29);
+  color: var(--text);
+  border-bottom-color: #41463f;
+}
+
+[data-theme="graphite"] .graph-canvas .workflow-node.selected {
+  border-color: var(--pink);
+  outline: 1px solid var(--pink);
+  outline-offset: 2px;
+}
+
+[data-theme="graphite"] .workflow-node.selected .node-icon { color: var(--wire-selected); }
+[data-theme="graphite"] .workflow-node.executing .node-live { color: var(--wire-selected); }
+[data-theme="graphite"] .graph-canvas :is(.node-subtitle, .socket-name small) { color: var(--muted); }
+[data-theme="graphite"] .graph-canvas .node-widgets label { color: var(--text-secondary); }
+[data-theme="graphite"] :is(.node-tool-summary, .node-custom-tool) { border-color: var(--control-border); }
+[data-theme="graphite"] .node-tool-summary > span { color: var(--muted); }
+[data-theme="graphite"] .graph-canvas .vue-flow__handle::after { background: var(--cream); border-color: #f4dfb0; }
+[data-theme="graphite"] .graph-canvas :is(.vue-flow__handle:hover, .vue-flow__handle.port-picked)::after { background: var(--wire-selected); box-shadow: 0 0 0 4px #ba0b7838; }
+[data-theme="graphite"] .graph-canvas .vue-flow__handle.port-compatible::after { background: #f4dfb0; box-shadow: 0 0 0 4px #e5c88e38; }
+[data-theme="graphite"] :is(.connection-selection, .graph-feedback, .read-only) { background: var(--panel); color: var(--text); border-color: #74694f; }
+[data-theme="graphite"] :is(.connection-selection, .graph-feedback) button { border-color: #864866; background: var(--selection); }
+[data-theme="graphite"] .connection-selection small { color: var(--muted); }
+[data-theme="graphite"] .event-kind.thought { color: #dfafca; }
+[data-theme="graphite"] .event-kind.observation { color: #bfc6b5; }
+[data-theme="graphite"] .inspector-answer { color: var(--text); }

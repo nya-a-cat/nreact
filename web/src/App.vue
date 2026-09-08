@@ -6,6 +6,10 @@ import { workflow, eventNode } from './graph.js'
 
 const graphSchema = ref(null)
 const config = ref(null), baseline = ref(''), revision = ref(''), configPath = ref(''), keyStatus = ref('empty')
+// Appearance follows the working configuration while inspecting any run snapshot.
+watch(() => config.value?.ui?.theme, theme => {
+  document.documentElement.dataset.theme = theme || 'classic'
+}, { immediate: true })
 const configName = computed(() => configPath.value.split(/[\\/]/).pop() || 'nreact.toml')
 const source = ref(''), savedSource = ref(''), key = ref(''), keyAction = ref('keep')
 const selected = ref('agent'), panel = ref('components'), rightTab = ref('properties'), bottomTab = ref('events')

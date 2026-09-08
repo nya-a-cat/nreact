@@ -9,7 +9,7 @@ export function workflow(config, task = '', result = null, event = null, schema 
     const fields = definition.fields.map(field => ({ ...field, value: field.path === 'task' ? task : field.path.split('.').reduce((value, key) => value?.[key], config) }))
     return { id: definition.id, type: 'workbench', position: { ...definition.position }, data: { ...definition, ports, fields, active: active === definition.id, portHeight: Math.max(definition.inputs.length, definition.outputs.length) * 25, tools: definition.id === 'tools' ? toolRows(config) : [], result: definition.id === 'answer' ? result : null } }
   })
-  const edges = schema.connections.map(connection => ({ ...connection, id: `${connection.source}:${connection.sourceHandle}->${connection.target}:${connection.targetHandle}`, type: 'outlined', data: { layer: connection.sourceHandle === 'result' ? 'action' : 'config' }, style: { stroke: connection.sourceHandle === 'result' ? '#d963ac' : '#bdb7a3', strokeWidth: 4 } }))
+  const edges = schema.connections.map(connection => ({ ...connection, id: `${connection.source}:${connection.sourceHandle}->${connection.target}:${connection.targetHandle}`, type: 'outlined', data: { layer: connection.sourceHandle === 'result' ? 'action' : 'config' }, style: { stroke: connection.sourceHandle === 'result' ? 'var(--wire-action)' : 'var(--wire-config)', strokeWidth: 4 } }))
   return { nodes, edges }
 }
 export function eventNode(event) {

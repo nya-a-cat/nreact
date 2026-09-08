@@ -66,14 +66,21 @@ class ToolSettings:
 
 
 @dataclass
+class UISettings:
+    theme: str = "classic"
+
+
+@dataclass
 class Config:
     model: ModelSettings = field(default_factory=ModelSettings)
     agent: AgentSettings = field(default_factory=AgentSettings)
     tools: ToolSettings = field(default_factory=ToolSettings)
     path: Path = field(default_factory=lambda: Path("nreact.toml").absolute())
+    ui: UISettings = field(default_factory=UISettings)
 
     def to_dict(self) -> dict:
-        return {"model": asdict(self.model), "agent": asdict(self.agent), "tools": asdict(self.tools)}
+        return {"model": asdict(self.model), "agent": asdict(self.agent), "tools": asdict(self.tools),
+                "ui": asdict(self.ui)}
 
     def public_dict(self) -> dict:
         data = self.to_dict()
@@ -112,8 +119,8 @@ def _number(value, name: str, low: float, high: float, *, integer: bool = False)
 
 def parse_config(data: dict, path: str | Path = "nreact.toml", *, use_environment: bool = True) -> Config:
     """Validate configuration without importing tools or making network requests."""
-    if not isinstance(data, dict) or set(data) - {"model", "agent", "tools"}:
-        raise ValueError("Configuration supports only model, agent and tools tables.")
+    if not isinstance(data, dict) or set(data) - {"model", "agent", "tools", "ui"}:
+        raise ValueError("Configuration supports only model, agent, tools and ui tables.")
     defaults = ModelSettings()
     if use_environment:
         defaults.name = os.getenv("NREACT_MODEL", "")
@@ -121,6 +128,10 @@ def parse_config(data: dict, path: str | Path = "nreact.toml", *, use_environmen
         defaults.auth = os.getenv("NREACT_AUTH", defaults.auth)
     model = ModelSettings(**{**asdict(defaults), **_table(data, "model", set(asdict(defaults)))})
     agent = AgentSettings(**_table(data, "agent", set(asdict(AgentSettings()))))
+    ui = UISettings(**_table(data, "ui", {"theme"}))
+    _string(ui.theme, "ui.theme", 32, empty=False)
+    if ui.theme not in {"classic", "graphite"}:
+        raise ValueError("ui.theme must be classic or graphite.")
     tool_data = _table(data, "tools", {"wikipedia", "workspace", "custom"})
     custom = tool_data.get("custom", [])
     if not isinstance(custom, list) or len(custom) > 32:
@@ -175,7 +186,7 @@ def parse_config(data: dict, path: str | Path = "nreact.toml", *, use_environmen
             raise ValueError("Tool callable must use module:function syntax, such as my_tools:lookup.")
         names.add(tool.name.lower())
         tools.custom.append(tool)
-    return Config(model, agent, tools, Path(path).absolute())
+    return Config(model, agent, tools, Path(path).absolute(), ui=ui)
 
 
 def _read(path: Path) -> bytes:
@@ -213,7 +224,7 @@ def dumps_config(config: Config) -> str:
     """Serialize the fixed schema as TOML, using JSON-compatible string escapes."""
     data = parse_config(config.to_dict(), config.path, use_environment=False).to_dict()
     lines = ["# nreact local configuration. Keep this file out of version control."]
-    for section in ("model", "agent", "tools"):
+    for section in ("ui", "model", "agent", "tools"):
         lines.extend(["", f"[{section}]"])
         for key, value in data[section].items():
             if key == "custom" or (key == "api_key" and not value):
