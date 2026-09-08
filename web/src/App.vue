@@ -6,6 +6,7 @@ import { workflow, eventNode } from './graph.js'
 
 const graphSchema = ref(null)
 const config = ref(null), baseline = ref(''), revision = ref(''), configPath = ref(''), keyStatus = ref('empty')
+const configName = computed(() => configPath.value.split(/[\\/]/).pop() || 'nreact.toml')
 const source = ref(''), savedSource = ref(''), key = ref(''), keyAction = ref('keep')
 const selected = ref('agent'), panel = ref('components'), rightTab = ref('properties'), bottomTab = ref('events')
 const task = ref(''), search = ref(''), graph = ref(null), runs = ref([]), run = ref(null), activeId = ref(null), eventIndex = ref(-1), followLive = ref(true)
@@ -62,7 +63,7 @@ function reload() { if (dirty.value || sourceDirty.value) { confirmReload.value 
 async function save() { await guarded(async () => {
   if (sourceDirty.value && dirty.value) throw new Error('Both properties and TOML have changes. Save one editor at a time; reload to discard both drafts.')
   const payload = sourceDirty.value ? { toml: source.value, revision: revision.value } : { config: { ...config.value, model: { ...config.value.model, ...(keyAction.value === 'replace' ? { api_key: key.value } : {}) } }, revision: revision.value, api_key_action: keyAction.value }
-  applyConfig(await api('config', payload)); notice.value = 'Saved to nreact.toml'
+  applyConfig(await api('config', payload)); notice.value = `Saved to ${configName.value}`
 }) }
 function editNode(path, value) { if (readOnly.value || sourceDirty.value || busy.value) return; if (path === 'task') { task.value = value; return }; const [section, field] = path.split('.'); if (graphSchema.value.nodes.some(node => node.fields.some(item => item.path === path))) config.value[section][field] = value }
 function selectNode(id, inspect = true) { selected.value = id; rightTab.value = 'properties'; if (inspect) inspectorOpen.value = true; if (compact.value) sidebar.value = false }
@@ -87,8 +88,8 @@ async function refreshRuns() { const data = await api('runs'); runs.value = data
 async function openRun(id) { await guarded(async () => { run.value = await api(`run?id=${id}`); eventIndex.value = run.value.events.length - 1; followLive.value = id === activeId.value; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (currentEvent.value) selected.value = eventNode(currentEvent.value) }) }
 function workingCopy() { run.value = null; eventIndex.value = -1; rightTab.value = 'properties'; selected.value = 'agent' }
 function copyRunTask() { const recordedTask = run.value?.task; workingCopy(); task.value = recordedTask || ''; selectNode('task') }
-async function start(demo = false, singleStep = false) { await guarded(async () => { const data = await api('run', { task: task.value, revision: revision.value, demo, single_step: singleStep, ...(!demo ? { connections: graphStatus.value.connections } : {}) }); activeId.value = data.id; run.value = await api(`run?id=${data.id}`); eventIndex.value = run.value.events.length - 1; followLive.value = true; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false; await refreshRuns() }) }
-async function control(action) { await guarded(async () => { await api('run/control', { id: run.value.id, action }); run.value = await api(`run?id=${run.value.id}`); followLive.value = true }) }
+async function start(demo = false, singleStep = false) { await guarded(async () => { const data = await api('run', { task: task.value, revision: revision.value, demo, single_step: singleStep, ...(!demo ? { connections: graphStatus.value.connections } : {}) }); activeId.value = data.id; await refreshRuns(); run.value = await api(`run?id=${data.id}`); eventIndex.value = run.value.events.length - 1; followLive.value = true; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false }) }
+async function control(action) { await guarded(async () => { const id = run.value.id; await api('run/control', { id, action }); await refreshRuns(); run.value = await api(`run?id=${id}`); followLive.value = true; eventIndex.value = run.value.events.length - 1; selected.value = eventNode(currentEvent.value) || selected.value }) }
 function selectEvent(index, openInspector = true) { eventIndex.value = index; followLive.value = false; selected.value = eventNode(currentEvent.value) || 'agent'; rightTab.value = 'event'; if (openInspector) inspectorOpen.value = true; if (compact.value) sidebar.value = false }
 function navigateEvent(delta) { selectEvent(Math.max(0, Math.min(events.value.length - 1, eventIndex.value + delta)), false) }
 async function exportFile(kind) { await guarded(async () => { exported.value = await api('export', { kind, ...(kind === 'run' ? { id: run.value.id } : kind === 'graph' ? { graph: graph.value.document() } : {}) }); copyStatus.value = ''; notice.value = 'Export saved to .nreact/exports/' }) }
@@ -121,9 +122,12 @@ onMounted(async () => {
   window.addEventListener('keydown', keydown); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('resize', resizeWorkspace)
   poller = setInterval(async () => { if (polling || busy.value) return; polling = true; try {
     if (activeId.value) {
-      const id = activeId.value; const data = await api(`run?id=${id}`)
-      if (run.value?.id === id) { run.value = data; if (followLive.value) { eventIndex.value = data.events.length - 1; selected.value = eventNode(currentEvent.value) || selected.value } }
+      const id = activeId.value
+      // Read lifecycle state before the record so a completed run still gets
+      // its final snapshot when refreshRuns clears the active id.
       await refreshRuns()
+      const data = await api(`run?id=${id}`)
+      if (run.value?.id === id) { run.value = data; if (followLive.value) { eventIndex.value = data.events.length - 1; selected.value = eventNode(currentEvent.value) || selected.value } }
     }
   } catch (reason) { error.value = reason.message } finally { polling = false } }, 400)
 })
@@ -143,7 +147,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
           </div>
         </div>
       </nav>
-      <button class="document-tab" :title="configPath" @click="workingCopy"><FileText :size="14" /> nreact.toml <span class="unsaved">{{ dirty || sourceDirty ? '●' : '' }}</span></button>
+      <button class="document-tab" :title="configPath" @click="workingCopy"><FileText :size="14" /> {{ configName }} <span class="unsaved">{{ dirty || sourceDirty ? '●' : '' }}</span></button>
       <div class="top-actions"><button aria-label="Save configuration" title="Save configuration (Ctrl S)" :disabled="readOnly || busy || (!dirty && !sourceDirty && revision !== 'missing')" @click="save"><Save :size="14" /><span>Save</span></button><span class="separator"></span>
         <button class="primary" :title="isActive ? 'Resume the paused run' : runHint" :disabled="isActive ? busy || run.status !== 'paused' : !canRun" @click="isActive ? control('resume') : start()"><Play :size="13" />{{ isActive && run.status === 'paused' ? 'Resume' : 'Run' }}</button>
         <button aria-label="Pause" title="Pause after the current turn" :disabled="!isActive || busy || run.status !== 'running'" @click="control('pause')"><Pause :size="14" /><span>Pause</span></button>
@@ -191,7 +195,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
           </fieldset>
         </div>
         <div v-else-if="rightTab === 'event'" class="event-inspector"><template v-if="currentEvent"><h2 class="property-title">{{ currentEvent.kind }} <span class="mono">#{{ eventIndex + 1 }}</span></h2><dl><dt>Turn</dt><dd>{{ currentEvent.step }}</dd><dt>Tool</dt><dd>{{ currentEvent.tool || '—' }}</dd><dt>Elapsed</dt><dd>{{ currentEvent.elapsed_seconds.toFixed(3) }}s</dd></dl><div class="detail-navigation"><button :disabled="eventIndex <= 0" aria-label="Previous event detail" @click="navigateEvent(-1)"><ChevronLeft :size="15" /> Previous</button><span>{{ eventIndex + 1 }} / {{ events.length }}</span><button :disabled="eventIndex >= events.length - 1" aria-label="Next event detail" @click="navigateEvent(1)">Next <ChevronRight :size="15" /></button></div><h3>Recorded content</h3><pre>{{ currentEvent.text }}</pre><p class="field-help">Previous and next browse recorded events. Use Step in the toolbar to execute another turn.</p></template><p v-else class="muted pad">Select an event from the timeline to inspect its full content.</p></div>
-        <div v-else class="source-editor"><div class="source-info"><span>{{ readOnly ? 'Working-copy source' : 'nreact.toml' }}</span><span>{{ sourceDirty ? 'Modified' : 'Keys omitted' }}</span></div><textarea v-model="source" aria-label="TOML configuration" spellcheck="false" :readonly="readOnly || dirty || busy"></textarea><p v-if="dirty" class="field-help">Save property changes before editing TOML.</p><p v-else class="field-help">Save validates TOML and preserves the existing API key.</p><button class="outline" :disabled="readOnly || busy || !sourceDirty" @click="save"><Save :size="13" /> Save TOML</button></div>
+        <div v-else class="source-editor"><div class="source-info"><span>{{ readOnly ? 'Working-copy source' : configName }}</span><span>{{ sourceDirty ? 'Modified' : 'Keys omitted' }}</span></div><textarea v-model="source" aria-label="TOML configuration" spellcheck="false" :readonly="readOnly || dirty || busy"></textarea><p v-if="dirty" class="field-help">Save property changes before editing TOML.</p><p v-else class="field-help">Save validates TOML and preserves the existing API key.</p><button class="outline" :disabled="readOnly || busy || !sourceDirty" @click="save"><Save :size="13" /> Save TOML</button></div>
       </aside>
     </main>
     <div v-else class="loading">{{ error ? 'Configuration could not be loaded.' : 'Opening workspace…' }}<button v-if="error" @click="reload">Retry</button></div>
