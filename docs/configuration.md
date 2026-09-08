@@ -49,7 +49,9 @@ theme = "graphite"
 
 `graphite` uses charcoal panels and nodes, dark input fields, warm gold connections and magenta accents. `classic` retains the original warm gray nodes and cream input fields. Files without `ui.theme` use `classic`; other theme names are rejected.
 
-Saving a theme change in the workbench's TOML editor applies it immediately. After editing the file externally, use **File → Reload from disk** or refresh the page. Opening a saved run keeps the working configuration's theme. Theme selection does not affect agent execution.
+In the browser, open **Settings** using the gear at the bottom of the left sidebar or **File → Settings**, then choose a theme under **Appearance**. Changes apply immediately and save to the current TOML file. Unsaved node-property changes remain in the editor. Finish saving or reload an open TOML draft before switching themes in Settings.
+
+Saving a theme change in the workbench's TOML editor also applies it immediately. After editing the file externally, use **File → Reload from disk** or refresh the page. Opening a saved run keeps the working configuration's theme. Theme selection does not affect agent execution.
 
 ## API keys
 

@@ -1,7 +1,8 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { Blocks, Layers, History, Code, Search, Plus, Play, Pause, Square, StepForward, ChevronLeft, ChevronRight, Save, RotateCcw, Download, X, CircleHelp, Terminal, SlidersHorizontal, Eye, Check, ArrowLeft, FileText } from '@lucide/vue'
+import { Blocks, Layers, History, Code, Search, Plus, Play, Pause, Square, StepForward, ChevronLeft, ChevronRight, Save, RotateCcw, Download, X, CircleHelp, Terminal, SlidersHorizontal, Eye, Check, ArrowLeft, FileText, Settings } from '@lucide/vue'
 import GraphCanvas from './GraphCanvas.vue'
+import SettingsDialog from './SettingsDialog.vue'
 import { workflow, eventNode } from './graph.js'
 
 const graphSchema = ref(null)
@@ -22,14 +23,15 @@ const graphStatus = ref({ valid: true, missing: [], connections: [] })
 const eventList = ref(null)
 const exported = ref(null), copyStatus = ref('')
 const confirmReload = ref(false)
-const modalOpen = computed(() => confirmReload.value || !!exported.value || help.value)
+const settingsOpen = ref(false), settingsError = ref(''), settingsNotice = ref('')
+const modalOpen = computed(() => confirmReload.value || !!exported.value || help.value || settingsOpen.value)
 let previousFocus
 watch(modalOpen, async open => {
   if (open) previousFocus = document.activeElement
   await nextTick()
   if (open) {
     const dialog = document.querySelector('.modal-scrim [role="dialog"]')
-    ;(dialog?.querySelector('[autofocus]') || dialog?.querySelector('button'))?.focus()
+    ;(dialog?.querySelector('[autofocus]:not(:disabled)') || dialog?.querySelector('button'))?.focus()
   } else if (previousFocus?.isConnected) previousFocus.focus()
 })
 const token = document.querySelector('meta[name="nreact-token"]')?.content
@@ -73,6 +75,33 @@ function editNode(path, value) { if (readOnly.value || sourceDirty.value || busy
 function selectNode(id, inspect = true) { selected.value = id; rightTab.value = 'properties'; if (inspect) inspectorOpen.value = true; if (compact.value) sidebar.value = false }
 function togglePanel(id) { sidebar.value = panel.value === id ? !sidebar.value : true; panel.value = id; if (narrow.value && sidebar.value) inspectorOpen.value = false }
 function showSource() { rightTab.value = 'source'; inspectorOpen.value = true; if (compact.value) sidebar.value = false }
+function showSettings() { settingsError.value = ''; settingsNotice.value = ''; settingsOpen.value = true; menu.value = '' }
+async function changeTheme(event) {
+  const theme = event.target.value
+  if (busy.value || sourceDirty.value || theme === config.value.ui.theme) return
+  const restoreFocus = document.activeElement === event.target
+  busy.value = true; settingsError.value = ''; settingsNotice.value = ''
+  try {
+    // Save from the last persisted snapshot so property and credential drafts stay local.
+    const saved = JSON.parse(baseline.value)
+    saved.ui = { ...saved.ui, theme }
+    const data = await api('config', { config: saved, revision: revision.value })
+    config.value.ui = data.config.ui
+    baseline.value = JSON.stringify(data.config)
+    revision.value = data.revision
+    source.value = savedSource.value = data.toml
+    keyStatus.value = data.key_status
+    settingsNotice.value = 'Theme saved'
+    notice.value = `Theme saved to ${configName.value}`
+  } catch (reason) {
+    settingsError.value = reason.message
+  } finally {
+    busy.value = false
+    await nextTick()
+    event.target.value = config.value.ui.theme
+    if (settingsOpen.value && restoreFocus && document.activeElement === document.body) event.target.focus()
+  }
+}
 function resizeWorkspace() { const nextCompact = window.innerWidth < 1250, nextNarrow = window.innerWidth < 1000; if (nextCompact !== compact.value) sidebar.value = !nextCompact; if (nextNarrow) inspectorOpen.value = false; compact.value = nextCompact; narrow.value = nextNarrow }
 function chooseComponent(id) {
   if (['wikipedia', 'workspace', 'custom'].includes(id)) {
@@ -100,10 +129,10 @@ async function exportFile(kind) { await guarded(async () => { exported.value = a
 function exportRun() { if (run.value) exportFile('run') }
 async function copyExport(pathOnly = false) { try { await navigator.clipboard.writeText(pathOnly ? exported.value.path : exported.value.content); copyStatus.value = pathOnly ? 'Path copied' : 'Content copied' } catch { copyStatus.value = 'Select the text below and press Ctrl/Cmd+C to copy.' } }
 function keydown(event) {
-  if (event.key === 'Escape') { if (confirmReload.value) { confirmReload.value = false; return }; if (exported.value) { exported.value = null; return }; menu.value = ''; help.value = false; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false; return }
+  if (event.key === 'Escape') { if (settingsOpen.value) { settingsOpen.value = false; return }; if (confirmReload.value) { confirmReload.value = false; return }; if (exported.value) { exported.value = null; return }; menu.value = ''; help.value = false; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false; return }
   if (modalOpen.value) {
     if (event.key === 'Tab') {
-      const items = [...document.querySelectorAll('.modal-scrim button:not(:disabled), .modal-scrim input, .modal-scrim textarea, .modal-scrim a[href]')]
+      const items = [...document.querySelectorAll('.modal-scrim button:not(:disabled), .modal-scrim input:not(:disabled), .modal-scrim select:not(:disabled), .modal-scrim textarea:not(:disabled), .modal-scrim a[href]')]
       const index = items.indexOf(document.activeElement)
       if ((event.shiftKey && index <= 0) || (!event.shiftKey && (index === -1 || index === items.length - 1))) {
         event.preventDefault()
@@ -144,7 +173,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
       <nav class="menus" aria-label="Application menu">
         <div v-for="name in ['File', 'View', 'Run', 'Help']" :key="name" class="menu-wrap"><button :class="{ active: menu === name }" @click.stop="menu = menu === name ? '' : name">{{ name }}</button>
           <div v-if="menu === name" class="dropdown" @click.stop>
-            <template v-if="name === 'File'"><button :disabled="readOnly || busy" @click="save"><Save :size="14" /> Save configuration <kbd>Ctrl S</kbd></button><button :disabled="busy" @click="reload"><RotateCcw :size="14" /> Reload from disk</button><button :disabled="busy" @click="exportFile('config')"><Download :size="14" /> Export saved TOML</button><button :disabled="readOnly || busy" @click="exportFile('graph')"><Download :size="14" /> Export working graph</button><button :disabled="!run" @click="exportRun"><Download :size="14" /> Export selected run</button><button :disabled="!run" @click="copyRunTask(); menu = ''">Copy run task to working copy</button></template>
+            <template v-if="name === 'File'"><button :disabled="readOnly || busy" @click="save"><Save :size="14" /> Save configuration <kbd>Ctrl S</kbd></button><button :disabled="busy" @click="reload"><RotateCcw :size="14" /> Reload from disk</button><button :disabled="busy" @click="exportFile('config')"><Download :size="14" /> Export saved TOML</button><button :disabled="readOnly || busy" @click="exportFile('graph')"><Download :size="14" /> Export working graph</button><button :disabled="!run" @click="exportRun"><Download :size="14" /> Export selected run</button><button :disabled="!run" @click="copyRunTask(); menu = ''">Copy run task to working copy</button><button :disabled="!config || busy" @click="showSettings"><Settings :size="14" /> Settings</button></template>
             <template v-if="name === 'View'"><button @click="sidebar = !sidebar; menu = ''">Toggle component panel</button><button @click="timeline = !timeline; menu = ''">Toggle event timeline</button><button @click="graph?.fit(); menu = ''">Fit graph <kbd>F</kbd></button><button @click="graph?.reset(); menu = ''">Reset node positions</button><button :disabled="readOnly" @click="graph?.restoreConnections(); menu = ''">Restore default connections</button><button @click="showSource(); menu = ''">Open TOML editor</button></template>
             <template v-if="name === 'Run'"><button :disabled="!canRun" @click="start()">Run saved configuration</button><button :disabled="!!activeId || busy" @click="start(true, true)">Step through offline demo</button><button :disabled="!!activeId || busy" @click="start(true)">Run offline demo</button></template>
             <template v-if="name === 'Help'"><button @click="help = true; menu = ''">Workbench guide</button><a href="https://github.com/nya-a-cat/nreact/blob/main/docs/configuration.md" target="_blank" rel="noreferrer">Configuration documentation ↗</a></template>
@@ -161,7 +190,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
     </header>
     <div v-if="error" class="message error" role="alert">{{ error }}<button aria-label="Dismiss error" @click="error = ''"><X :size="15" /></button></div>
     <main v-if="config" class="workspace" :class="{ 'sidebar-hidden': !sidebar, 'timeline-hidden': !timeline, 'inspector-hidden': !inspectorOpen }">
-      <aside class="icon-rail" aria-label="Workspace panels"><button v-for="item in [{ id: 'components', icon: Blocks, label: 'Components' }, { id: 'layers', icon: Layers, label: 'Layers' }, { id: 'history', icon: History, label: 'Run history' }]" :key="item.id" :class="{ active: sidebar && panel === item.id }" :title="item.label" :aria-label="item.label" @click="togglePanel(item.id)"><component :is="item.icon" :size="18" /></button><button title="TOML source" aria-label="TOML source" :class="{ active: rightTab === 'source' }" @click="showSource"><Code :size="18" /></button><button title="Toggle inspector" aria-label="Toggle inspector" :class="{ active: inspectorOpen }" @click="inspectorOpen = !inspectorOpen; if (narrow) sidebar = false"><SlidersHorizontal :size="18" /></button><div class="rail-spacer"></div><button title="Workbench guide" aria-label="Workbench guide" @click="help = true"><CircleHelp :size="18" /></button></aside>
+      <aside class="icon-rail" aria-label="Workspace panels"><button v-for="item in [{ id: 'components', icon: Blocks, label: 'Components' }, { id: 'layers', icon: Layers, label: 'Layers' }, { id: 'history', icon: History, label: 'Run history' }]" :key="item.id" :class="{ active: sidebar && panel === item.id }" :title="item.label" :aria-label="item.label" @click="togglePanel(item.id)"><component :is="item.icon" :size="18" /></button><button title="TOML source" aria-label="TOML source" :class="{ active: rightTab === 'source' }" @click="showSource"><Code :size="18" /></button><button title="Toggle inspector" aria-label="Toggle inspector" :class="{ active: inspectorOpen }" @click="inspectorOpen = !inspectorOpen; if (narrow) sidebar = false"><SlidersHorizontal :size="18" /></button><div class="rail-spacer"></div><button title="Settings" aria-label="Settings" :class="{ active: settingsOpen }" @click="showSettings"><Settings :size="18" /></button><button title="Workbench guide" aria-label="Workbench guide" @click="help = true"><CircleHelp :size="18" /></button></aside>
       <aside v-if="sidebar" class="library">
         <header class="panel-heading"><span>{{ panel === 'components' ? 'Components' : panel === 'layers' ? 'Graph layers' : 'Run history' }}</span><button aria-label="Hide side panel" @click="sidebar = false"><X :size="13" /></button></header>
         <template v-if="panel === 'components'">
@@ -204,6 +233,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
     </main>
     <div v-else class="loading">{{ error ? 'Configuration could not be loaded.' : 'Opening workspace…' }}<button v-if="error" @click="reload">Retry</button></div>
     <footer class="statusbar"><span class="status-dot" :class="{ live: isActive }"></span><strong>{{ status }}</strong><span class="status-message">{{ isActive && run.status === 'pausing' ? 'Finishing the current turn…' : isActive && run.status === 'cancelling' ? 'Waiting for the in-flight call to return…' : notice || (!run ? runHint : '') }}</span><span class="status-shortcuts">Ctrl S Save · F Fit · ← → Inspect</span><span>Python / local</span></footer>
+    <SettingsDialog v-if="settingsOpen && config" :theme="config.ui.theme" :config-name="configName" :busy="busy" :toml-dirty="sourceDirty" :error="settingsError" :notice="settingsNotice" @theme="changeTheme" @close="settingsOpen = false" />
     <div v-if="confirmReload" class="modal-scrim" @click.self="confirmReload = false"><section class="help-dialog" role="dialog" aria-modal="true" aria-label="Reload configuration"><header><h2>Reload configuration?</h2><button aria-label="Close reload prompt" @click="confirmReload = false"><X :size="18" /></button></header><p class="reload-message">Your unsaved property and TOML changes will be replaced with the saved file.</p><div class="export-actions"><button class="outline" autofocus @click="confirmReload = false">Keep editing</button><button class="primary" @click="loadSavedConfig">Discard and reload</button></div></section></div>
     <div v-if="exported" class="modal-scrim" @click.self="exported = null"><section class="help-dialog export-dialog" role="dialog" aria-modal="true" aria-label="Export saved"><header><h2>Export saved</h2><button aria-label="Close export" @click="exported = null"><X :size="18" /></button></header><p class="export-name">{{ exported.name }}</p><label class="stacked">Local file<input :value="exported.path" aria-label="Export path" readonly /></label><div class="export-actions"><button class="outline" @click="copyExport(true)">Copy path</button><button class="outline" @click="copyExport()">Copy content</button><span role="status">{{ copyStatus }}</span></div><textarea :value="exported.content" aria-label="Export content" readonly spellcheck="false"></textarea><button class="primary" @click="exported = null">Done</button></section></div>
     <div v-if="help" class="modal-scrim" @click.self="help = false"><section class="help-dialog" role="dialog" aria-modal="true" aria-label="Workbench guide"><header><h2>Workbench guide</h2><button aria-label="Close guide" @click="help = false"><X :size="18" /></button></header><ol><li>Edit <b>ChatModel</b> on the canvas; open its ⋯ menu for credentials.</li><li>Edit <b>ConfiguredEnvironment</b> to enable Wikipedia, a workspace or Python functions.</li><li>Save the configuration, enter a task and click <b>Run</b>.</li><li><b>Step</b> executes one complete ReAct turn. Pause takes effect before the next turn. Stop waits for an in-flight call and prevents the next operation.</li><li>Choose an event to inspect it. The arrow buttons browse saved events without executing tools.</li></ol><p>Try the offline demo to explore the debugger with a scripted model and fictional pages. Runs and traces are stored beside the configuration in <code>.nreact/runs/</code>.</p><p>Drag nodes to arrange the graph. Drag an output port to a matching input to connect; select a wire and press Delete to disconnect. Edit parameters inside nodes; use the ⋯ button for advanced properties. The working graph is saved in this browser. Run requires the backend component connections to be complete.</p><button class="primary" @click="help = false">Got it</button></section></div>
