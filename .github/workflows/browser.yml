@@ -1,0 +1,55 @@
+name: browser
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: browser-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python -m pip install . playwright==1.57.0
+      - run: python -m playwright install --with-deps chromium
+      - run: npm install --global agent-browser@0.37.1
+      - name: Inspect the packaged interface with agent-browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p browser-artifacts
+          export AGENT_BROWSER_EXECUTABLE_PATH="$(python -c 'from playwright.sync_api import sync_playwright; p = sync_playwright().start(); print(p.chromium.executable_path); p.stop()')"
+          python -m nreact ui --config "$RUNNER_TEMP/nreact-browser/nreact.toml" --port 8765 --no-browser >browser-artifacts/server.log 2>&1 &
+          server_pid=$!
+          trap 'agent-browser close || true; kill "$server_pid" || true' EXIT
+          for attempt in $(seq 1 40); do curl -fsS http://127.0.0.1:8765/ >/dev/null && break || sleep .25; done
+          agent-browser open http://127.0.0.1:8765
+          agent-browser wait --load networkidle
+          agent-browser snapshot -i >browser-artifacts/initial-snapshot.txt
+          cat browser-artifacts/initial-snapshot.txt
+          agent-browser screenshot browser-artifacts/initial.png
+          agent-browser eval 'document.body.innerText.trim().length > 0 && document.querySelectorAll(".vue-flow__node").length === 5 ? "WORKSPACE_READY" : "WORKSPACE_FAILED"' | tee browser-artifacts/initial-health.txt
+          grep -q WORKSPACE_READY browser-artifacts/initial-health.txt
+          agent-browser console >browser-artifacts/initial-console.txt
+          agent-browser errors >browser-artifacts/initial-errors.txt
+          agent-browser close
+      - name: Run real-browser regression tests
+        env:
+          NREACT_BROWSER_ARTIFACTS: browser-artifacts
+        run: python -m unittest discover -s tests/browser -v
+      - name: Preserve screenshots and Playwright traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-${{ github.sha }}
+          path: browser-artifacts/
+          retention-days: 14
