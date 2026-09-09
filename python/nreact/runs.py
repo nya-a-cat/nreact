@@ -1,9 +1,7 @@
 """Local workbench run history and cooperative run lifecycle."""
 
 import copy
-import json
-import os
-import re
+import heapq
 import threading
 import time
 import uuid
@@ -11,8 +9,11 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ._run_store import load_record, validate_identity, write_record
 from .config import build_agent, parse_config
 from .control import RunControl
+
+MAX_UNSAVED_RUNS = 50
 
 
 class RunHistory:
@@ -21,17 +22,14 @@ class RunHistory:
         self.lock = threading.RLock()
         self.active = None
         self.control = None
+        # Only live runs and records whose final save failed stay in memory.
         self.records = {}
 
     def _read(self, identity):
-        if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{32}", identity):
-            raise ValueError("Invalid run identifier.")
+        validate_identity(identity)
         if identity in self.records:
             return self.records[identity]
-        path = self.directory / f"{identity}.json"
-        if path.stat().st_size > 24_000_000:
-            raise ValueError("Run record is too large.")
-        return json.loads(path.read_text(encoding="utf-8"))
+        return load_record(self.directory, identity)
 
     def snapshot(self, identity):
         with self.lock:
@@ -42,35 +40,56 @@ class RunHistory:
 
     def list(self):
         with self.lock:
-            paths = sorted(self.directory.glob("*.json"), key=lambda p: p.name, reverse=True)
-            records = {}
-            for path in paths:
-                try:
-                    record = self._read(path.stem)
-                    records[record["id"]] = record
-                except (OSError, ValueError, KeyError):
-                    continue
-            records.update(self.records)
-            items = []
-            for record in records.values():
-                item = {k: record.get(k) for k in ("id", "task", "started_at", "status", "demo", "steps", "model", "elapsed_seconds")}
-                if item["id"] == self.active:
-                    item["status"] = self.control.state
-                items.append(item)
-            return {"runs": sorted(items, key=lambda r: r["started_at"], reverse=True)[:50], "active": self.active}
+            def summaries():
+                for path in self.directory.glob("*.json"):
+                    if path.stem in self.records:
+                        continue
+                    try:
+                        yield self._summary(self._read(path.stem))
+                    except (OSError, ValueError):
+                        continue
+                for record in self.records.values():
+                    yield self._summary(record)
+
+            # Retain only fifty summaries while scanning; full traces are released.
+            items = heapq.nlargest(50, summaries(), key=lambda item: (
+                datetime.fromisoformat(item["started_at"]), item["id"]))
+            return {"runs": items, "active": self.active}
+
+    def _summary(self, record):
+        item = {key: record.get(key) for key in (
+            "id", "task", "started_at", "status", "demo", "steps", "model", "elapsed_seconds")}
+        if item["id"] == self.active:
+            item["status"] = self.control.state
+        return item
 
     def _persist(self, record):
-        path = self.directory / f"{record['id']}.json"
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as writer:
-            json.dump(record, writer, ensure_ascii=False)
+        write_record(self.directory, {key: value for key, value in record.items() if key != "storage_error"})
+
+    def _finish(self, record):
+        """Release lifecycle state even when serialization or storage fails."""
+        with self.lock:
+            try:
+                self._persist(record)
+            except (OSError, ValueError, TypeError, RecursionError):
+                record["storage_error"] = "Could not save this run to disk. Export it before closing the server."
+            else:
+                self.records.pop(record["id"], None)
+            finally:
+                self.active = None
+                self.control = None
 
     def start(self, config, task, *, demo=False, single_step=False):
         with self.lock:
             if self.active:
                 raise ValueError("Finish or stop the active run before starting another.")
+            if len(self.records) >= MAX_UNSAVED_RUNS:
+                raise ValueError("Too many unsaved runs. Export them and repair storage before restarting the server.")
             self.directory.mkdir(parents=True, exist_ok=True)
             identity = uuid.uuid4().hex
+            if any((self.directory / f"{identity}.{suffix}").exists()
+                   or (self.directory / f"{identity}.{suffix}").is_symlink() for suffix in ("json", "jsonl")):
+                raise ValueError("Run identifier already exists. Try starting again.")
             if demo:
                 config = parse_config({"model": {"name": "Scripted demo"}, "agent": {"max_steps": 7},
                                        "tools": {"wikipedia": True}}, config.path, use_environment=False)
@@ -79,6 +98,11 @@ class RunHistory:
                       "model": config.model.name, "config": config.public_dict(),
                       "started_at": datetime.now(timezone.utc).isoformat(), "status": "running",
                       "steps": 0, "events": [], "result": None, "error": None, "elapsed_seconds": 0}
+            # A recoverable manifest exists before any model or tool can run.
+            try:
+                self._persist(record)
+            except (OSError, ValueError, TypeError, RecursionError):
+                raise ValueError("Could not create the run record. Check the storage path and permissions.") from None
             self.records[identity] = record
             controller = RunControl(paused=single_step)
             if single_step:
@@ -107,21 +131,24 @@ class RunHistory:
                         record["result"] = result.to_dict()
                         record["status"] = result.status
                         record["steps"] = result.steps
-                        record["elapsed_seconds"] = time.monotonic() - started
                         record["error"] = result.error
                 except BaseException as exc:
                     with self.lock:
+                        record["result"] = None
                         record["status"] = "error"
                         record["error"] = f"Run failed ({type(exc).__name__}). Check the model and tool configuration."
                 finally:
                     with self.lock:
-                        try:
-                            self._persist(record)
-                        except OSError:
-                            record["storage_error"] = "Could not save this run to disk. Export it before closing the server."
-                        self.active = None
+                        record["elapsed_seconds"] = time.monotonic() - started
+                        self._finish(record)
 
-            threading.Thread(target=execute, name="nreact-run", daemon=True).start()
+            try:
+                threading.Thread(target=execute, name="nreact-run", daemon=True).start()
+            except Exception:
+                record["status"] = "error"
+                record["error"] = "Could not start the run worker. No model or tool was called."
+                self._finish(record)
+                raise ValueError(record["error"]) from None
             return {"id": identity}
 
     def command(self, identity, action):

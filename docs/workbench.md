@@ -37,6 +37,8 @@ File → Export saved TOML and Export selected run write unique files under `.nr
 
 ## Local storage
 
-Each run writes a JSONL execution trace and a completed JSON record under `.nreact/runs/`, relative to the configuration directory. Completed records remain readable after restart. An interrupted server can leave an incomplete JSONL trace; it does not resume that execution automatically. Task, model output and tool content are stored as supplied; configuration snapshots omit the API key field.
+Each run writes an initial JSON manifest and a JSONL execution trace under `.nreact/runs/`, relative to the configuration directory. A complete JSON record atomically replaces the manifest when execution ends. After interruption, the workbench recovers complete recorded events and any final result from the trace. Unfinished runs are shown as `interrupted`; recovery never re-executes tools. Task, model output and tool content are stored as supplied; configuration snapshots omit the API key field.
+
+See [Run storage and recovery](run-recovery.md) for storage limits, failed saves, cancellation and durability details.
 
 The HTTP server binds to `127.0.0.1`. API requests require the session token provided by the local page and matching host/origin headers. JavaScript, styles and fonts are bundled with the Python package. Model calls, Wikipedia requests and custom-tool behavior follow the configuration.
