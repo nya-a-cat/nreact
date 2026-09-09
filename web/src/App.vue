@@ -3,6 +3,8 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Blocks, Layers, History, Code, Search, Plus, Play, Pause, Square, StepForward, ChevronLeft, ChevronRight, Save, RotateCcw, Download, X, CircleHelp, Terminal, SlidersHorizontal, Eye, Check, ArrowLeft, FileText, Settings } from '@lucide/vue'
 import GraphCanvas from './GraphCanvas.vue'
 import SettingsDialog from './SettingsDialog.vue'
+import WorkflowDialog from './WorkflowDialog.vue'
+import { validateGraph, clone } from './graph-document.js'
 import { workflow, eventNode } from './graph.js'
 
 const graphSchema = ref(null)
@@ -24,7 +26,10 @@ const eventList = ref(null)
 const exported = ref(null), copyStatus = ref('')
 const confirmReload = ref(false)
 const settingsOpen = ref(false), settingsError = ref(''), settingsNotice = ref('')
-const modalOpen = computed(() => confirmReload.value || !!exported.value || help.value || settingsOpen.value)
+const workflowMode = ref(''), workflowName = ref('Untitled workflow'), workflowRecords = ref([]), workflowSelected = ref(''), workflowTruncated = ref(false)
+const workflowCurrent = ref(null), workflowPreview = ref(null), workflowInput = ref(null), savedTask = ref('')
+const workflowReplacing = computed(() => !!workflowCurrent.value && workflowName.value.trim() === workflowCurrent.value.workflow.name)
+const modalOpen = computed(() => confirmReload.value || !!exported.value || help.value || settingsOpen.value || !!workflowMode.value)
 let previousFocus
 watch(modalOpen, async open => {
   if (open) previousFocus = document.activeElement
@@ -63,6 +68,66 @@ async function api(path, payload) {
   return data
 }
 function applyConfig(data) { graphSchema.value = data.graph_schema; config.value = data.config; baseline.value = JSON.stringify(data.config); revision.value = data.revision; configPath.value = data.path; source.value = savedSource.value = data.toml; keyStatus.value = data.key_status; key.value = ''; keyAction.value = 'keep' }
+function workflowDocument() {
+  if (readOnly.value || sourceDirty.value) throw new Error('Open the working copy and save or reload the TOML draft before saving a workflow.')
+  return { format: 'nreact.workflow', version: 1, name: workflowName.value.trim(), config: clone(config.value), task: task.value, graph: graph.value.document() }
+}
+async function showWorkflows(mode) {
+  if (busy.value) return
+  workflowMode.value = mode; error.value = ''; menu.value = ''
+  if (mode === 'open') await guarded(async () => {
+    const data = await api('workflows'); workflowRecords.value = data.workflows; workflowTruncated.value = data.truncated
+    workflowSelected.value = data.workflows.some(item => item.id === workflowSelected.value) ? workflowSelected.value : data.workflows[0]?.id || ''
+  })
+}
+async function saveWorkflow() { await guarded(async () => {
+  const document = workflowDocument()
+  const current = workflowReplacing.value ? workflowCurrent.value : null
+  workflowCurrent.value = await api('workflow', { workflow: document, ...(current ? { id: current.id, revision: current.revision } : {}) })
+  workflowName.value = workflowCurrent.value.workflow.name; savedTask.value = task.value
+  workflowMode.value = ''; notice.value = 'Workflow saved to .nreact/workflows/'
+}) }
+async function openWorkflow() { await guarded(async () => {
+  workflowPreview.value = await api(`workflow?id=${encodeURIComponent(workflowSelected.value)}`)
+  validateGraph(workflowPreview.value.workflow.graph, graphSchema.value)
+  workflowMode.value = 'preview'
+}) }
+async function importWorkflow(event) {
+  const file = event.target.files?.[0]; event.target.value = ''
+  if (!file || busy.value) return
+  await guarded(async () => {
+    if (file.size > 60000) throw new Error('Workflow file exceeds the 60000-byte size limit.')
+    let document
+    try { document = JSON.parse(await file.text()) } catch { throw new Error('Choose a valid workflow JSON file.') }
+    const data = await api('workflow/validate', { workflow: document })
+    validateGraph(data.workflow.graph, graphSchema.value)
+    workflowPreview.value = data; workflowMode.value = 'preview'
+  })
+}
+async function applyWorkflow() { await guarded(async () => {
+  const data = workflowPreview.value, document = data.workflow
+  const checked = validateGraph(document.graph, graphSchema.value)
+  workingCopy(); await nextTick()
+  graph.value.load(checked)
+  config.value = clone(document.config); task.value = document.task
+  source.value = savedSource.value = data.toml
+  key.value = ''; keyAction.value = 'clear'
+  workflowCurrent.value = data.id ? data : null; workflowName.value = document.name
+  savedTask.value = data.id ? document.task : ''
+  workflowMode.value = ''; workflowPreview.value = null
+  notice.value = 'Workflow opened as a draft. Review settings and save configuration before running.'
+}) }
+async function deleteWorkflow() { await guarded(async () => {
+  const item = workflowRecords.value.find(item => item.id === workflowSelected.value)
+  if (!item) throw new Error('Choose a saved workflow.')
+  await api('workflow/delete', { id: item.id, revision: item.revision })
+  if (workflowCurrent.value?.id === item.id) workflowCurrent.value = null
+  workflowMode.value = ''; notice.value = 'Saved workflow deleted'
+}) }
+async function exportWorkflow() { await guarded(async () => {
+  exported.value = await api('export', { kind: 'workflow', workflow: workflowDocument() }); copyStatus.value = ''
+  savedTask.value = task.value; notice.value = 'Workflow exported to .nreact/exports/'
+}) }
 async function guarded(action) { if (busy.value) return; busy.value = true; error.value = ''; notice.value = ''; try { await action() } catch (reason) { error.value = reason.message } finally { busy.value = false; menu.value = '' } }
 async function loadSavedConfig() { confirmReload.value = false; await guarded(async () => { applyConfig(await api('config')); notice.value = 'Configuration reloaded' }) }
 function reload() { if (dirty.value || sourceDirty.value) { confirmReload.value = true; menu.value = ''; return }; return loadSavedConfig() }
@@ -129,6 +194,7 @@ async function exportFile(kind) { await guarded(async () => { exported.value = a
 function exportRun() { if (run.value) exportFile('run') }
 async function copyExport(pathOnly = false) { try { await navigator.clipboard.writeText(pathOnly ? exported.value.path : exported.value.content); copyStatus.value = pathOnly ? 'Path copied' : 'Content copied' } catch { copyStatus.value = 'Select the text below and press Ctrl/Cmd+C to copy.' } }
 function keydown(event) {
+  if (event.key === 'Escape' && workflowMode.value) { if (!busy.value) workflowMode.value = ''; return }
   if (event.key === 'Escape') { if (settingsOpen.value) { settingsOpen.value = false; return }; if (confirmReload.value) { confirmReload.value = false; return }; if (exported.value) { exported.value = null; return }; menu.value = ''; help.value = false; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false; return }
   if (modalOpen.value) {
     if (event.key === 'Tab') {
@@ -148,7 +214,7 @@ function keydown(event) {
   if (event.key === 'ArrowLeft' && events.value.length) { event.preventDefault(); navigateEvent(-1) }
   if (event.key === 'ArrowRight' && events.value.length) { event.preventDefault(); navigateEvent(1) }
 }
-function beforeUnload(event) { if (dirty.value || sourceDirty.value) { event.preventDefault(); event.returnValue = '' } }
+function beforeUnload(event) { if (dirty.value || sourceDirty.value || task.value !== savedTask.value) { event.preventDefault(); event.returnValue = '' } }
 let poller, polling = false
 onMounted(async () => {
   await guarded(async () => { applyConfig(await api('config')); await refreshRuns(); if (activeId.value) { run.value = await api(`run?id=${activeId.value}`); eventIndex.value = run.value.events.length - 1 } })
@@ -173,7 +239,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
       <nav class="menus" aria-label="Application menu">
         <div v-for="name in ['File', 'View', 'Run', 'Help']" :key="name" class="menu-wrap"><button :class="{ active: menu === name }" @click.stop="menu = menu === name ? '' : name">{{ name }}</button>
           <div v-if="menu === name" class="dropdown" @click.stop>
-            <template v-if="name === 'File'"><button :disabled="readOnly || busy" @click="save"><Save :size="14" /> Save configuration <kbd>Ctrl S</kbd></button><button :disabled="busy" @click="reload"><RotateCcw :size="14" /> Reload from disk</button><button :disabled="busy" @click="exportFile('config')"><Download :size="14" /> Export saved TOML</button><button :disabled="readOnly || busy" @click="exportFile('graph')"><Download :size="14" /> Export working graph</button><button :disabled="!run" @click="exportRun"><Download :size="14" /> Export selected run</button><button :disabled="!run" @click="copyRunTask(); menu = ''">Copy run task to working copy</button><button :disabled="!config || busy" @click="showSettings"><Settings :size="14" /> Settings</button></template>
+            <template v-if="name === 'File'"><button :disabled="readOnly || sourceDirty || busy" @click="showWorkflows('save')">Save workflow…</button><button :disabled="busy" @click="showWorkflows('open')">Open workflow…</button><button :disabled="busy" @click="workflowInput.click(); menu = ''">Import workflow…</button><button :disabled="readOnly || sourceDirty || busy" @click="exportWorkflow">Export workflow</button><button :disabled="readOnly || busy" @click="save"><Save :size="14" /> Save configuration <kbd>Ctrl S</kbd></button><button :disabled="busy" @click="reload"><RotateCcw :size="14" /> Reload from disk</button><button :disabled="busy" @click="exportFile('config')"><Download :size="14" /> Export saved TOML</button><button :disabled="readOnly || busy" @click="exportFile('graph')"><Download :size="14" /> Export working graph</button><button :disabled="!run" @click="exportRun"><Download :size="14" /> Export selected run</button><button :disabled="!run" @click="copyRunTask(); menu = ''">Copy run task to working copy</button><button :disabled="!config || busy" @click="showSettings"><Settings :size="14" /> Settings</button></template>
             <template v-if="name === 'View'"><button @click="sidebar = !sidebar; menu = ''">Toggle component panel</button><button @click="timeline = !timeline; menu = ''">Toggle event timeline</button><button @click="graph?.fit(); menu = ''">Fit graph <kbd>F</kbd></button><button @click="graph?.reset(); menu = ''">Reset node positions</button><button :disabled="readOnly" @click="graph?.restoreConnections(); menu = ''">Restore default connections</button><button @click="showSource(); menu = ''">Open TOML editor</button></template>
             <template v-if="name === 'Run'"><button :disabled="!canRun" @click="start()">Run saved configuration</button><button :disabled="!!activeId || busy" @click="start(true, true)">Step through offline demo</button><button :disabled="!!activeId || busy" @click="start(true)">Run offline demo</button></template>
             <template v-if="name === 'Help'"><button @click="help = true; menu = ''">Workbench guide</button><a href="https://github.com/nya-a-cat/nreact/blob/main/docs/configuration.md" target="_blank" rel="noreferrer">Configuration documentation ↗</a></template>
@@ -233,6 +299,8 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
     </main>
     <div v-else class="loading">{{ error ? 'Configuration could not be loaded.' : 'Opening workspace…' }}<button v-if="error" @click="reload">Retry</button></div>
     <footer class="statusbar"><span class="status-dot" :class="{ live: isActive }"></span><strong>{{ status }}</strong><span class="status-message">{{ isActive && run.status === 'pausing' ? 'Finishing the current turn…' : isActive && run.status === 'cancelling' ? 'Waiting for the in-flight call to return…' : notice || (!run ? runHint : '') }}</span><span class="status-shortcuts">Ctrl S Save · F Fit · ← → Inspect</span><span>Python / local</span></footer>
+    <input ref="workflowInput" type="file" accept="application/json,.json" aria-label="Import workflow file" hidden @change="importWorkflow" />
+    <WorkflowDialog v-if="workflowMode" :mode="workflowMode" :name="workflowName" :records="workflowRecords" :selected="workflowSelected" :preview="workflowPreview" :busy="busy" :error="error" :replacing="workflowReplacing" :truncated="workflowTruncated" @name="workflowName = $event" @select="workflowSelected = $event" @close="workflowMode = ''" @save="saveWorkflow" @open="openWorkflow" @preview-delete="workflowMode = 'delete'" @delete="deleteWorkflow" @apply="applyWorkflow" />
     <SettingsDialog v-if="settingsOpen && config" :theme="config.ui.theme" :config-name="configName" :busy="busy" :toml-dirty="sourceDirty" :error="settingsError" :notice="settingsNotice" @theme="changeTheme" @close="settingsOpen = false" />
     <div v-if="confirmReload" class="modal-scrim" @click.self="confirmReload = false"><section class="help-dialog" role="dialog" aria-modal="true" aria-label="Reload configuration"><header><h2>Reload configuration?</h2><button aria-label="Close reload prompt" @click="confirmReload = false"><X :size="18" /></button></header><p class="reload-message">Your unsaved property and TOML changes will be replaced with the saved file.</p><div class="export-actions"><button class="outline" autofocus @click="confirmReload = false">Keep editing</button><button class="primary" @click="loadSavedConfig">Discard and reload</button></div></section></div>
     <div v-if="exported" class="modal-scrim" @click.self="exported = null"><section class="help-dialog export-dialog" role="dialog" aria-modal="true" aria-label="Export saved"><header><h2>Export saved</h2><button aria-label="Close export" @click="exported = null"><X :size="18" /></button></header><p class="export-name">{{ exported.name }}</p><label class="stacked">Local file<input :value="exported.path" aria-label="Export path" readonly /></label><div class="export-actions"><button class="outline" @click="copyExport(true)">Copy path</button><button class="outline" @click="copyExport()">Copy content</button><span role="status">{{ copyStatus }}</span></div><textarea :value="exported.content" aria-label="Export content" readonly spellcheck="false"></textarea><button class="primary" @click="exported = null">Done</button></section></div>

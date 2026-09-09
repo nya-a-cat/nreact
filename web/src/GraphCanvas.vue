@@ -5,16 +5,18 @@ import { Minus, Plus, Maximize, Undo2, Redo2, Trash2, RotateCcw } from '@lucide/
 import WorkflowNode from './WorkflowNode.vue'
 import WorkflowEdge from './WorkflowEdge.vue'
 import { workflow } from './graph.js'
+import { validateGraph, clone } from './graph-document.js'
 
 const props = defineProps({ config: Object, task: String, result: Object, schema: Object, editLocked: Boolean, event: Object, selected: String, layers: Object, storageKey: String, readOnly: Boolean })
-const emit = defineEmits(['select', 'ready', 'edit'])
+const emit = defineEmits(['select', 'ready', 'edit', 'change'])
 const nodes = ref([]), edges = ref([]), canvas = ref(null)
 const selectedEdge = ref(null), context = ref(null), feedback = ref(''), missing = ref([])
 const undoStack = ref([]), redoStack = ref([])
 const pendingPort = ref(null), pointer = ref(null), portError = ref('')
 let dragStart = null, ignoreClickUntil = 0
-const { fitView, zoomIn, zoomOut, viewport } = useVueFlow()
+const { fitView, zoomIn, zoomOut, viewport, setViewport } = useVueFlow()
 let positions = {}, connections = null, updatingEdge = null, connectionAdded = false, messageTimer
+let pendingViewport = null, workingViewport = null
 const zoom = computed(() => Math.round(viewport.value.zoom * 100))
 const pendingLinks = computed(() => pendingPort.value ? edges.value.filter(edge => edge.source === pendingPort.value.nodeId && edge.sourceHandle === pendingPort.value.handleId || edge.target === pendingPort.value.nodeId && edge.targetHandle === pendingPort.value.handleId) : [])
 const preview = computed(() => {
@@ -38,6 +40,7 @@ function valid(connection) {
   if (connection.source === connection.target) return false
   const source = port(connection.source, connection.sourceHandle), target = port(connection.target, connection.targetHandle)
   if (source?.direction !== 'source' || target?.direction !== 'target' || source.label !== target.label) return false
+  if (!props.schema.connections.some(edge => identity(edge) === identity(connection))) return false
   // Vue Flow also validates already-created edges during setEdges. Their own
   // occupied input must not invalidate them when a different wire is edited.
   if (connection.id) return true
@@ -77,8 +80,10 @@ function endDrag(event) {
   else notify('Drop on a matching port, or click two ports to connect.')
 }
 function save() {
+  if (props.readOnly) return
+  emit('change')
   try {
-    localStorage.setItem(`nreact-graph:${props.storageKey}`, JSON.stringify({ version: 2, positions, connections }))
+    localStorage.setItem(`nreact-graph:${props.storageKey}`, JSON.stringify(graphDocument()))
     localStorage.setItem(`nreact-layout:${props.storageKey}`, JSON.stringify(positions))
   } catch { notify('Could not save the diagram in this browser. Export the graph to keep a copy.') }
 }
@@ -109,23 +114,59 @@ function refreshNodes() {
   renderEdges()
 }
 watch(() => props.storageKey, key => {
-  positions = {}; connections = null; nodes.value = []; undoStack.value = []; redoStack.value = []
+  positions = {}; connections = null; pendingViewport = null; workingViewport = null; nodes.value = []; undoStack.value = []; redoStack.value = []
   try {
     const saved = JSON.parse(localStorage.getItem(`nreact-graph:${key}`) || 'null')
-    positions = saved?.version === 2 ? saved.positions || {} : {}
-    connections = saved?.version === 2 && Array.isArray(saved?.connections) ? saved.connections : null
+    if (saved) {
+      // Older graph records stored null until the first connection edit.
+      const value = validateGraph({ ...saved, connections: saved.connections ?? defaults().edges.map(link) }, props.schema)
+      positions = value.positions; connections = value.connections
+      pendingViewport = value.viewport || null
+    }
   } catch { notify('Saved diagram could not be read. Using the initial layout.') }
   refreshNodes()
 }, { immediate: true })
 watch(() => [props.config, props.task, props.result, props.schema, props.editLocked, props.event, props.selected, props.readOnly], refreshNodes, { deep: true })
 watch(() => props.layers, renderEdges, { deep: true })
-watch(() => props.readOnly, cancelPort)
+watch(() => props.readOnly, readOnly => {
+  if (readOnly) workingViewport = { ...viewport.value }
+  else pendingViewport = workingViewport
+  nodes.value = []; cancelPort()
+  requestAnimationFrame(() => readOnly ? fitView({ padding: .17 }) : restoreView())
+})
+
+function graphDocument() { return clone({ version: 2, positions, connections: connections ?? defaults().edges.map(link), viewport: { ...(pendingViewport || viewport.value) } }) }
+function restoreView() {
+  if (!pendingViewport || props.readOnly) return
+  const view = pendingViewport; pendingViewport = null
+  requestAnimationFrame(async () => { await setViewport(view); save() })
+}
+function rememberView({ event }) { if (event && !props.readOnly) save() }
+async function fit() { await fitView({ padding: .17 }); save() }
+async function changeZoom(direction) { await (direction > 0 ? zoomIn() : zoomOut()); save() }
+function checkpoint() {
+  undoStack.value.push(graphDocument())
+  if (undoStack.value.length > 50) undoStack.value.shift()
+  redoStack.value = []
+}
+function applyGraph(value) {
+  const next = validateGraph(value, props.schema)
+  positions = next.positions; connections = next.connections; nodes.value = []
+  pendingViewport = next.viewport || null
+  selectedEdge.value = null; context.value = null; pendingPort.value = null
+  refreshNodes(); save(); restoreView()
+}
+function load(value) {
+  if (props.readOnly) throw new Error('Open the working copy before loading a graph.')
+  const next = validateGraph(value, props.schema)
+  checkpoint(); applyGraph(next)
+  if (!next.viewport) requestAnimationFrame(() => fitView({ padding: .17 }))
+}
 
 function edit(next, message) {
   if (props.readOnly) { notify('Open the working copy to edit connections.'); return }
-  undoStack.value.push((connections ?? defaults().edges.map(link)).map(link))
-  if (undoStack.value.length > 50) undoStack.value.shift()
-  redoStack.value = []; connections = next.map(link); selectedEdge.value = null; context.value = null
+  checkpoint()
+  connections = next.map(link); selectedEdge.value = null; context.value = null
   renderEdges(); save(); notify(message)
 }
 function connect(connection) {
@@ -151,15 +192,20 @@ function disconnectPort(nodeId, handleId) {
 }
 function undo() {
   if (props.readOnly || !undoStack.value.length) return
-  redoStack.value.push((connections ?? defaults().edges.map(link)).map(link)); connections = undoStack.value.pop()
-  selectedEdge.value = null; renderEdges(); save(); notify('Connection change undone')
+  redoStack.value.push(graphDocument()); applyGraph(undoStack.value.pop()); notify('Graph change undone')
 }
 function redo() {
   if (props.readOnly || !redoStack.value.length) return
-  undoStack.value.push((connections ?? defaults().edges.map(link)).map(link)); connections = redoStack.value.pop()
-  selectedEdge.value = null; renderEdges(); save(); notify('Connection change restored')
+  undoStack.value.push(graphDocument()); applyGraph(redoStack.value.pop()); notify('Graph change restored')
 }
-function remember({ node }) { positions[node.id] = { ...node.position }; save() }
+function remember({ node }) {
+  if (props.readOnly) return
+  const next = { x: node.position.x, y: node.position.y }
+  const old = positions[node.id] || props.schema.nodes.find(item => item.id === node.id)?.position
+  if (old?.x === next.x && old?.y === next.y) return
+  const checked = validateGraph({ ...graphDocument(), positions: { ...positions, [node.id]: next } }, props.schema)
+  checkpoint(); positions = checked.positions; save()
+}
 function selectNode({ node }) { selectedEdge.value = null; context.value = null; emit('select', node.id, false) }
 function selectConnection({ edge }) { selectedEdge.value = edge.id; context.value = null; nodes.value.forEach(node => { node.selected = false }); renderEdges(); canvas.value.focus() }
 function edgeMenu({ edge, event }) {
@@ -170,6 +216,8 @@ function edgeMenu({ edge, event }) {
 function paneClick() { cancelPort(); selectedEdge.value = null; context.value = null; renderEdges(); canvas.value.focus() }
 function restoreConnections() { edit(defaults().edges.map(link), 'Default connections restored') }
 function reset() {
+  if (props.readOnly) { nodes.value = []; refreshNodes(); requestAnimationFrame(() => fitView({ padding: .17 })); return }
+  checkpoint()
   positions = {}; nodes.value = defaults().nodes.map(node => ({ ...node, selected: props.selected === node.id, data: { ...node.data, readOnly: props.readOnly, editLocked: props.editLocked } }))
   save(); requestAnimationFrame(() => fitView({ padding: .17 }))
 }
@@ -191,9 +239,9 @@ function keyboard(event) {
   if (directions[event.key]) { const [x, y] = directions[event.key], amount = event.shiftKey ? 50 : 10; node.position = { x: node.position.x + x * amount, y: node.position.y + y * amount }; remember({ node }) }
   else emit('select', node.id, true)
 }
-defineExpose({ reset, restoreConnections, fit: () => fitView({ padding: .17 }), document: () => ({ version: 2, positions, connections: (connections ?? defaults().edges.map(link)).map(link) }) })
+defineExpose({ reset, restoreConnections, load, fit, document: graphDocument })
 let observer, resizeTimer
-onMounted(() => { observer = new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => fitView({ padding: .17 }), 120) }); observer.observe(canvas.value) })
+onMounted(() => { observer = new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(restoreView, 120) }); observer.observe(canvas.value) })
 onUnmounted(() => { observer?.disconnect(); clearTimeout(resizeTimer); clearTimeout(messageTimer) })
 </script>
 
@@ -201,11 +249,11 @@ onUnmounted(() => { observer?.disconnect(); clearTimeout(resizeTimer); clearTime
   <div ref="canvas" class="graph-canvas" tabindex="0" aria-label="Workflow canvas" @keydown.capture="keyboard" @pointermove="movePointer">
     <div class="canvas-caption"><span class="tiny-square"></span>{{ readOnly ? 'Run graph · view only' : 'Editable graph' }}</div>
     <div class="canvas-tools">
-      <button title="Undo connection change (Ctrl Z)" aria-label="Undo connection change" :disabled="readOnly || !undoStack.length" @click="undo"><Undo2 :size="14" /></button>
-      <button title="Redo connection change (Ctrl Shift Z)" aria-label="Redo connection change" :disabled="readOnly || !redoStack.length" @click="redo"><Redo2 :size="14" /></button>
-      <button title="Zoom out" aria-label="Zoom out" @click="zoomOut()"><Minus :size="14" /></button><span>{{ zoom }}%</span><button title="Zoom in" aria-label="Zoom in" @click="zoomIn()"><Plus :size="14" /></button><button title="Fit graph (F)" aria-label="Fit graph" @click="fitView({ padding: .17 })"><Maximize :size="14" /></button>
+      <button title="Undo graph change (Ctrl Z)" aria-label="Undo graph change" :disabled="readOnly || !undoStack.length" @click="undo"><Undo2 :size="14" /></button>
+      <button title="Redo graph change (Ctrl Shift Z)" aria-label="Redo graph change" :disabled="readOnly || !redoStack.length" @click="redo"><Redo2 :size="14" /></button>
+      <button title="Zoom out" aria-label="Zoom out" @click="changeZoom(-1)"><Minus :size="14" /></button><span>{{ zoom }}%</span><button title="Zoom in" aria-label="Zoom in" @click="changeZoom(1)"><Plus :size="14" /></button><button title="Fit graph (F)" aria-label="Fit graph" @click="fit"><Maximize :size="14" /></button>
     </div>
-    <VueFlow v-model:nodes="nodes" v-model:edges="edges" :nodes-draggable="true" :nodes-connectable="!readOnly" :edges-updatable="!readOnly" :is-valid-connection="valid" :connect-on-click="false" :edge-updater-radius="14" :node-drag-threshold="3" :delete-key-code="null" :min-zoom=".3" :max-zoom="1.6" :fit-view-on-init="true" :fit-view-params="{ padding: .17 }" :zoom-on-double-click="false" @node-click="selectNode"  @node-drag-stop="remember" @edge-click="selectConnection" @edge-context-menu="edgeMenu" @pane-click="paneClick" @connect="connect" @connect-start="startDrag" @connect-end="endDrag" @edge-update-start="updatingEdge = $event.edge.id; connectionAdded = false" @edge-update="updateConnection" @edge-update-end="updatingEdge = null">
+    <VueFlow @nodes-initialized="restoreView" @move-end="rememberView" v-model:nodes="nodes" v-model:edges="edges" :nodes-draggable="true" :nodes-connectable="!readOnly" :edges-updatable="!readOnly" :is-valid-connection="valid" :connect-on-click="false" :edge-updater-radius="14" :node-drag-threshold="3" :delete-key-code="null" :min-zoom=".3" :max-zoom="1.6" :fit-view-on-init="true" :fit-view-params="{ padding: .17 }" :zoom-on-double-click="false" @node-click="selectNode"  @node-drag-stop="remember" @edge-click="selectConnection" @edge-context-menu="edgeMenu" @pane-click="paneClick" @connect="connect" @connect-start="startDrag" @connect-end="endDrag" @edge-update-start="updatingEdge = $event.edge.id; connectionAdded = false" @edge-update="updateConnection" @edge-update-end="updatingEdge = null">
       <template #node-workbench="nodeProps"><WorkflowNode v-bind="nodeProps" @disconnect-port="disconnectPort(nodeProps.id, $event); cancelPort()" @port-click="(handleId, event) => clickPort(nodeProps.id, handleId, event)" @edit="(path, value) => emit('edit', path, value)" @inspect="emit('select', nodeProps.id, true)" /></template>
       <template #edge-outlined="edgeProps"><WorkflowEdge v-bind="edgeProps" :zoom="viewport.zoom" /></template>
       <template #connection-line="lineProps"><WorkflowEdge v-bind="lineProps" :zoom="viewport.zoom" preview /></template>

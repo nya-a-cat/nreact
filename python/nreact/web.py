@@ -14,30 +14,12 @@ from urllib.parse import parse_qs, urlsplit
 
 from .config import dumps_config, load_config, parse_config, revision, save_config, tomllib
 from .runs import RunHistory
-from .graph import GRAPH_SCHEMA, REACT_CONNECTIONS
+from .graph import GRAPH_SCHEMA
+from .workflows import WorkflowConflict, WorkflowStore, validate_connections, validate_graph, validate_workflow
 
 
 class ConflictError(ValueError):
     pass
-
-
-def validate_connections(value, *, complete=False):
-    if not isinstance(value, list) or len(value) > 32:
-        raise ValueError("Graph connections must be a list of at most 32 links.")
-    actual = set()
-    for edge in value:
-        if not isinstance(edge, dict) or set(edge) != {"source", "sourceHandle", "target", "targetHandle"}:
-            raise ValueError("Each connection requires source, sourceHandle, target and targetHandle.")
-        connection = tuple(edge[key] for key in ("source", "sourceHandle", "target", "targetHandle"))
-        if not all(isinstance(item, str) for item in connection) or connection not in REACT_CONNECTIONS:
-            raise ValueError("Connection ports are incompatible with the ReAct components.")
-        if connection in actual:
-            raise ValueError("Duplicate graph connection.")
-        actual.add(connection)
-    if complete and actual != REACT_CONNECTIONS:
-        missing = sorted(f"{target}.{handle}" for _, _, target, handle in REACT_CONNECTIONS - actual)
-        raise ValueError(f"Connect {', '.join(missing)} before running.")
-    return value
 
 
 class LocalApp:
@@ -46,6 +28,7 @@ class LocalApp:
         self.token = secrets.token_urlsafe(32)
         self.lock = threading.RLock()
         self.runs = RunHistory(self.path.parent / ".nreact" / "runs")
+        self.workflows = WorkflowStore(self.path.parent / ".nreact" / "workflows", self.path)
 
     def _load(self):
         before = revision(self.path)
@@ -127,16 +110,15 @@ class LocalApp:
             content = json.dumps(record, ensure_ascii=False, indent=2)
             stem, suffix = f"run-{record['id'][:8]}", "json"
         elif kind == "graph":
-            graph = payload.get("graph")
-            if not isinstance(graph, dict) or set(graph) != {"version", "positions", "connections"} or graph["version"] != GRAPH_SCHEMA["version"]:
-                raise ValueError("Unsupported graph document.")
-            validate_connections(graph["connections"])
-            if not isinstance(graph["positions"], dict):
-                raise ValueError("Graph positions must be an object.")
+            graph = validate_graph(payload.get("graph"))
             content = json.dumps(graph, ensure_ascii=False, indent=2)
             stem, suffix = "graph", "json"
+        elif kind == "workflow":
+            document = validate_workflow(payload.get("workflow"), self.path)
+            content = json.dumps(document, ensure_ascii=False)
+            stem, suffix = "workflow", "json"
         else:
-            raise ValueError("Choose a configuration, graph or run to export.")
+            raise ValueError("Choose a configuration, graph, workflow or run to export.")
         directory = self.path.parent / ".nreact" / "exports"
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / f"{stem}-{secrets.token_hex(6)}.{suffix}"
@@ -208,6 +190,13 @@ def make_server(path: str | Path = "nreact.toml", *, port: int = 8765) -> Thread
                     self._json(200, app.snapshot())
                 elif route == "/api/runs":
                     self._json(200, app.runs.list())
+                elif route == "/api/workflows":
+                    self._json(200, app.workflows.list())
+                elif route == "/api/workflow":
+                    identity = parse_qs(urlsplit(self.path).query).get("id", [""])[0]
+                    record = app.workflows.get(identity)
+                    config = parse_config(record["workflow"]["config"], app.path, use_environment=False)
+                    self._json(200, {**record, "toml": dumps_config(config)})
                 elif route == "/api/run":
                     identity = parse_qs(urlsplit(self.path).query).get("id", [""])[0]
                     self._json(200, app.runs.snapshot(identity))
@@ -250,7 +239,7 @@ def make_server(path: str | Path = "nreact.toml", *, port: int = 8765) -> Thread
                     return
                 try:
                     payload = json.loads(self.rfile.read(length))
-                except (ValueError, UnicodeError):
+                except (ValueError, UnicodeError, RecursionError):
                     self._json(400, {"error": "Invalid JSON request."})
                     return
                 if not isinstance(payload, dict):
@@ -264,9 +253,17 @@ def make_server(path: str | Path = "nreact.toml", *, port: int = 8765) -> Thread
                     self._json(200, app.runs.command(payload.get("id"), payload.get("action")))
                 elif route == "/api/export":
                     self._json(200, app.export(payload))
+                elif route == "/api/workflow":
+                    self._json(200, app.workflows.save(payload))
+                elif route == "/api/workflow/validate":
+                    document = validate_workflow(payload.get("workflow"), app.path, imported=True)
+                    config = parse_config(document["config"], app.path, use_environment=False)
+                    self._json(200, {"workflow": document, "toml": dumps_config(config)})
+                elif route == "/api/workflow/delete":
+                    self._json(200, app.workflows.delete(payload))
                 else:
                     self._json(404, {"error": "Not found."})
-            except ConflictError as exc:
+            except (ConflictError, WorkflowConflict) as exc:
                 self._json(409, {"error": str(exc)})
             except (ValueError, TypeError) as exc:
                 message = str(exc) if isinstance(exc, ValueError) else "Invalid configuration field types."
