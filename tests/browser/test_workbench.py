@@ -13,9 +13,11 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from playwright.sync_api import expect, sync_playwright
 
+from nreact import Agent, ScriptedModel, ToolEnvironment
 from nreact.config import parse_config, save_config
 from nreact.web import make_server
 
@@ -330,6 +332,120 @@ class WorkbenchBrowserTests(unittest.TestCase):
         expect(self.page.locator(".vue-flow__node")).to_have_count(5)
         self.page.wait_for_function("([key, zoom]) => Math.abs(JSON.parse(localStorage.getItem(key) || 'null')?.viewport?.zoom - zoom) < .00001", arg=[f"nreact-graph:{self.config_path}", before["zoom"]])
         self.assertAlmostEqual(self.graph_record()["viewport"]["zoom"], before["zoom"], places=5)
+
+    def test_queue_cancel_and_resume_execute_each_remaining_task_once(self):
+        built = []
+        def build(config):
+            built.append(config.model.name)
+            return Agent(ScriptedModel(["Thought: Done\nAction: Finish[queue answer]"]), ToolEnvironment([]))
+        with patch('nreact.runs.build_agent', side_effect=build):
+            self.menu('Run', 'Pause queue')
+            self.page.get_by_role('textbox', name='task', exact=True).fill('First queued task')
+            self.menu('Run', 'Queue task')
+            expect(self.page.locator('.statusbar strong')).to_have_text('queued')
+            expect(self.page.get_by_label('Queue status')).to_contain_text('Queue: 1')
+            self.page.locator('.workspace-tabs').get_by_role('button', name='Working copy', exact=True).click()
+            self.page.get_by_role('textbox', name='task', exact=True).fill('Removed task')
+            self.menu('Run', 'Queue task')
+            expect(self.page.get_by_label('Queue status')).to_contain_text('Queue: 2')
+            self.page.get_by_role('button', name='Stop', exact=True).click()
+            expect(self.page.locator('.statusbar strong')).to_have_text('cancelled')
+            expect(self.page.get_by_label('Queue status')).to_contain_text('Queue: 1')
+            self.assertEqual(built, [])
+            self.menu('Run', 'Resume queue')
+            self.page.get_by_role('button', name='Run history', exact=True).click()
+            self.page.locator('.run-list button').filter(has_text='First queued task').click()
+            expect(self.page.locator('.statusbar strong')).to_have_text('finished')
+            self.page.locator('.trace-tabs').get_by_role('button', name='Result', exact=True).click()
+            expect(self.page.locator('.result-output pre')).to_have_text('queue answer')
+            self.assertEqual(built, ['fixture-model'])
+
+    def test_queue_failure_pauses_pending_work_until_explicit_resume(self):
+        built = []
+        class FailingModel:
+            def generate(self, prompt, *, stop):
+                raise RuntimeError('fixture-secret')
+        def build(config):
+            built.append(config.model.name)
+            model = FailingModel() if len(built) == 1 else ScriptedModel(['Thought: Done\nAction: Finish[recovered]'])
+            return Agent(model, ToolEnvironment([]))
+        with patch('nreact.runs.build_agent', side_effect=build):
+            self.page.get_by_role('textbox', name='task', exact=True).fill('Fail first')
+            self.menu('Run', 'Queue task')
+            expect(self.page.locator('.statusbar strong')).to_have_text('model_error')
+            expect(self.page.get_by_label('Queue status')).to_contain_text('paused')
+            self.page.locator('.workspace-tabs').get_by_role('button', name='Working copy', exact=True).click()
+            self.page.get_by_role('textbox', name='task', exact=True).fill('Continue after repair')
+            self.menu('Run', 'Queue task')
+            expect(self.page.locator('.statusbar strong')).to_have_text('queued')
+            self.assertEqual(len(built), 1)
+            self.menu('Run', 'Resume queue')
+            expect(self.page.locator('.statusbar strong')).to_have_text('finished')
+            self.assertEqual(len(built), 2)
+
+    def test_other_browser_run_is_discovered_without_replacing_working_draft(self):
+        self.page.get_by_role('textbox', name='task', exact=True).fill('Keep my local task')
+        other_context = self.browser.new_context(viewport={'width': 1440, 'height': 1000})
+        other = other_context.new_page()
+        try:
+            other.goto(self.page.url)
+            expect(other.locator('.vue-flow__node')).to_have_count(5)
+            other.locator('.menus').get_by_role('button', name='Run', exact=True).click()
+            other.locator('.dropdown').get_by_role('button', name='Step through offline demo', exact=True).click()
+            expect(other.locator('.statusbar strong')).to_have_text('paused')
+            self.page.bring_to_front()
+            expect(self.page.get_by_role('button', name='Return to active run', exact=True)).to_be_visible(timeout=10000)
+            expect(self.page.get_by_role('textbox', name='task', exact=True)).to_have_value('Keep my local task')
+            self.page.get_by_role('button', name='Return to active run', exact=True).click()
+            expect(self.page.locator('.statusbar strong')).to_have_text('paused')
+        finally:
+            other_context.close()
+
+    def test_read_connection_recovers_and_keeps_the_task_draft(self):
+        self.page.get_by_role('textbox', name='task', exact=True).fill('Preserve this draft')
+        self.page.route('**/api/runs/state', lambda route: route.abort('failed'))
+        expect(self.page.get_by_role('alert')).to_contain_text('could not be reached', timeout=10000)
+        self.page.unroute('**/api/runs/state')
+        expect(self.page.get_by_role('alert')).to_have_count(0, timeout=10000)
+        expect(self.page.get_by_role('textbox', name='task', exact=True)).to_have_value('Preserve this draft')
+
+    def test_lost_post_response_is_never_automatically_resubmitted(self):
+        calls = []
+        def lose_response(route):
+            calls.append(route.request.post_data_json)
+            route.fetch()
+            route.abort('failed')
+        self.page.route('**/api/run', lose_response)
+        self.menu('Run', 'Step through offline demo')
+        expect(self.page.get_by_role('alert')).to_contain_text('may have been applied')
+        expect(self.page.get_by_role('button', name='Return to active run', exact=True)).to_be_visible(timeout=10000)
+        self.page.get_by_role('button', name='Return to active run', exact=True).click()
+        expect(self.page.locator('.statusbar strong')).to_have_text('paused')
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(self.server.app.runs.list()['runs']), 1)
+        self.page.unroute('**/api/run')
+
+    def test_active_polling_uses_event_deltas_and_does_not_repeat_history_scan(self):
+        self.demo(step=True)
+        seen = []
+        self.page.on('request', lambda request: seen.append(request.url))
+        self.page.wait_for_function("() => document.querySelector('.statusbar strong').textContent === 'paused'")
+        with self.page.expect_response(lambda response: '/api/run/updates?' in response.url) as received:
+            pass
+        body = received.value.json()
+        self.assertEqual(body['events'], [])
+        self.assertEqual(body['next_offset'], 3)
+        self.assertNotIn('config', body)
+        self.assertFalse(any(url.endswith('/api/runs') for url in seen))
+
+    def test_state_polling_keeps_working_copy_during_execution(self):
+        self.demo(step=True)
+        self.page.locator('.workspace-tabs').get_by_role('button', name='Working copy', exact=True).click()
+        self.page.get_by_role('textbox', name='task', exact=True).fill('Working during execution')
+        with self.page.expect_response(lambda response: '/api/runs/state' in response.url):
+            pass
+        expect(self.page.locator('.snapshot-label')).to_have_count(0)
+        expect(self.page.get_by_role('textbox', name='task', exact=True)).to_have_value('Working during execution')
 
 
 if __name__ == "__main__":

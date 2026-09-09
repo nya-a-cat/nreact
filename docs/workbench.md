@@ -18,7 +18,7 @@ Layers controls construction inputs and the Result connection. Panels start clos
 
 ## Execution and replay
 
-Run uses the saved configuration and task. Only one run can be active per server. The offline demo uses a scripted model and fictional Wikipedia pages, independent of the working configuration.
+Run uses the saved configuration and task. Only one run can be active per server. **Run → Queue task** submits additional tasks with their own saved configuration snapshots. Pause/resume the pending queue from the Run menu; open Run history and select a queued task to remove it with Stop. See [Run queue and live updates](run-queue.md) for queue limits, cancellation and connection recovery. The offline demo uses a scripted model and fictional Wikipedia pages, independent of the working configuration.
 
 | Control | Behavior |
 | --- | --- |

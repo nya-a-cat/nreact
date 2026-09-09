@@ -10,7 +10,7 @@ from pathlib import Path
 
 MAX_RECORD_BYTES = 24_000_000
 MAX_TRACE_BYTES = 3 * MAX_RECORD_BYTES
-LIVE_STATUSES = frozenset({"running", "paused", "pausing", "cancelling"})
+LIVE_STATUSES = frozenset({"queued", "running", "paused", "pausing", "cancelling"})
 
 
 def validate_identity(identity):
