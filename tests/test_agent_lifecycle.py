@@ -13,7 +13,7 @@ from nreact.control import RunControl
 class AgentLifecycleTests(unittest.TestCase):
     def test_precancelled_run_skips_environment_reset_and_model(self):
         environment = Mock(instructions="Echo[input]")
-        model = Mock()
+        model = Mock(spec=["generate"])
         control = RunControl()
         control.command("cancel")
         result = Agent(model, environment).run("Task", control=control)
@@ -26,7 +26,7 @@ class AgentLifecycleTests(unittest.TestCase):
     def test_reset_error_is_sanitized_and_finishes_trace(self):
         environment = Mock(instructions="Echo[input]")
         environment.reset.side_effect = RuntimeError("fixture-secret")
-        model = Mock()
+        model = Mock(spec=["generate"])
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trace.jsonl"
             result = Agent(model, environment).run("Task", trace_path=path)
@@ -53,7 +53,7 @@ class AgentLifecycleTests(unittest.TestCase):
                     release.wait(5)
                     return Observation("Tool completed", done=done, answer="ok" if done else None)
                 environment.step.side_effect = step
-                model = Mock()
+                model = Mock(spec=["generate"])
                 model.generate.return_value = Completion("Thought: Query\nAction: Echo[x]", {"total_tokens": 7})
                 control = RunControl()
                 agent = Agent(model, environment, max_steps=1)
