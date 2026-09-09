@@ -84,7 +84,8 @@ class LocalApp:
         task = payload.get("task", "")
         demo = payload.get("demo", False)
         stepping = payload.get("single_step", False)
-        if type(demo) is not bool or type(stepping) is not bool:
+        queued = payload.get("queue", False)
+        if type(demo) is not bool or type(stepping) is not bool or type(queued) is not bool:
             raise ValueError("Run options must be booleans.")
         if not demo and (not isinstance(task, str) or not task.strip() or len(task) > 16_000):
             raise ValueError("Enter a task of 1-16000 characters.")
@@ -97,7 +98,7 @@ class LocalApp:
                     raise ConflictError("Save or reload the configuration before running.")
                 if not config.model.name.strip():
                     raise ValueError("Set a model name before running.")
-            return self.runs.start(config, task, demo=demo, single_step=stepping)
+            return self.runs.start(config, task, demo=demo, single_step=stepping, queue=queued)
 
     def export(self, payload: dict) -> dict:
         """Export to an exclusive local file, including in browsers without downloads."""
@@ -190,6 +191,8 @@ def make_server(path: str | Path = "nreact.toml", *, port: int = 8765) -> Thread
                     self._json(200, app.snapshot())
                 elif route == "/api/runs":
                     self._json(200, app.runs.list())
+                elif route == "/api/runs/state":
+                    self._json(200, app.runs.state())
                 elif route == "/api/workflows":
                     self._json(200, app.workflows.list())
                 elif route == "/api/workflow":
@@ -200,6 +203,12 @@ def make_server(path: str | Path = "nreact.toml", *, port: int = 8765) -> Thread
                 elif route == "/api/run":
                     identity = parse_qs(urlsplit(self.path).query).get("id", [""])[0]
                     self._json(200, app.runs.snapshot(identity))
+                elif route == "/api/run/updates":
+                    query = parse_qs(urlsplit(self.path).query)
+                    offset = query.get("offset", ["0"])[0]
+                    if not offset.isascii() or not offset.isdecimal() or len(offset) > 8:
+                        raise ValueError("Event offset must be a non-negative integer.")
+                    self._json(200, app.runs.updates(query.get("id", [""])[0], int(offset)))
                 elif route == "/":
                     html = assets.joinpath("index.html").read_text(encoding="utf-8")
                     self._send(200, html.replace("__NREACT_TOKEN__", app.token).encode(), "text/html")
@@ -251,6 +260,8 @@ def make_server(path: str | Path = "nreact.toml", *, port: int = 8765) -> Thread
                     self._json(202, app.start(payload))
                 elif route == "/api/run/control":
                     self._json(200, app.runs.command(payload.get("id"), payload.get("action")))
+                elif route == "/api/queue/control":
+                    self._json(200, app.runs.queue_command(payload.get("action")))
                 elif route == "/api/export":
                     self._json(200, app.export(payload))
                 elif route == "/api/workflow":

@@ -6,6 +6,8 @@ import SettingsDialog from './SettingsDialog.vue'
 import WorkflowDialog from './WorkflowDialog.vue'
 import { validateGraph, clone } from './graph-document.js'
 import { workflow, eventNode } from './graph.js'
+import { createApi } from './api.js'
+import { mergeRunUpdate, liveStatus, eventPreview } from './run-updates.js'
 
 const graphSchema = ref(null)
 const config = ref(null), baseline = ref(''), revision = ref(''), configPath = ref(''), keyStatus = ref('empty')
@@ -17,6 +19,7 @@ const configName = computed(() => configPath.value.split(/[\\/]/).pop() || 'nrea
 const source = ref(''), savedSource = ref(''), key = ref(''), keyAction = ref('keep')
 const selected = ref('agent'), panel = ref('components'), rightTab = ref('properties'), bottomTab = ref('events')
 const task = ref(''), search = ref(''), graph = ref(null), runs = ref([]), run = ref(null), activeId = ref(null), eventIndex = ref(-1), followLive = ref(true)
+const queuedIds = ref([]), queuePaused = ref(false), connectionError = ref('')
 const error = ref(''), notice = ref(''), busy = ref(false), menu = ref(''), help = ref(false)
 const sidebar = ref(false), inspectorOpen = ref(false), timeline = ref(false)
 const compact = ref(window.innerWidth < 1250), narrow = ref(window.innerWidth < 1000)
@@ -40,6 +43,7 @@ watch(modalOpen, async open => {
   } else if (previousFocus?.isConnected) previousFocus.focus()
 })
 const token = document.querySelector('meta[name="nreact-token"]')?.content
+const api = createApi(token)
 const dirty = computed(() => !!config.value && (JSON.stringify(config.value) !== baseline.value || keyAction.value !== 'keep'))
 const sourceDirty = computed(() => source.value !== savedSource.value)
 const displayed = computed(() => run.value?.config || config.value)
@@ -48,8 +52,9 @@ const visibleTask = computed({ get: () => run.value?.task || task.value, set: va
 const events = computed(() => run.value?.events || [])
 const currentEvent = computed(() => events.value[eventIndex.value] || null)
 const isActive = computed(() => run.value && run.value.id === activeId.value)
-const canRun = computed(() => config.value && !readOnly.value && graphStatus.value.valid && !busy.value && !activeId.value && !dirty.value && !sourceDirty.value && revision.value !== 'missing' && config.value.model.name.trim() && task.value.trim())
-const runHint = computed(() => activeId.value ? 'Return to the active run to resume or stop it.' : readOnly.value ? 'Return to the working copy to start a new run.' : !graphStatus.value.valid ? `Connect ${graphStatus.value.missing.join(', ')} before running.` : dirty.value || sourceDirty.value || revision.value === 'missing' ? 'Save the configuration before running.' : !config.value?.model.name.trim() ? 'Set model.name in the ChatModel node.' : !task.value.trim() ? 'Enter a task in the Task node.' : 'Run the saved configuration.')
+const canQueue = computed(() => config.value && !readOnly.value && graphStatus.value.valid && !busy.value && !dirty.value && !sourceDirty.value && revision.value !== 'missing' && config.value.model.name.trim() && task.value.trim())
+const canRun = computed(() => canQueue.value && !activeId.value && !queuedIds.value.length)
+const runHint = computed(() => activeId.value ? 'Return to the active run to resume or stop it.' : queuedIds.value.length ? 'Resume the queue or remove pending tasks before an immediate run.' : readOnly.value ? 'Return to the working copy to start a new run.' : !graphStatus.value.valid ? `Connect ${graphStatus.value.missing.join(', ')} before running.` : dirty.value || sourceDirty.value || revision.value === 'missing' ? 'Save the configuration before running.' : !config.value?.model.name.trim() ? 'Set model.name in the ChatModel node.' : !task.value.trim() ? 'Enter a task in the Task node.' : 'Run the saved configuration.')
 const graphNodes = computed(() => displayed.value ? workflow(displayed.value, '', null, null, graphSchema.value).nodes : [])
 const selectedTitle = computed(() => graphNodes.value.find(node => node.id === selected.value)?.data.title || 'Properties')
 const status = computed(() => run.value?.status || (dirty.value || sourceDirty.value ? 'Unsaved changes' : revision.value === 'missing' ? 'New configuration' : 'Ready'))
@@ -61,12 +66,6 @@ const groups = [
   { title: 'Outputs', items: [{ id: 'answer', name: 'Result', detail: 'Status, answer, usage and errors', icon: Check }] },
 ]
 const filteredGroups = computed(() => groups.map(group => ({ ...group, items: group.items.filter(item => `${item.name} ${item.detail}`.toLowerCase().includes(search.value.toLowerCase())) })).filter(group => group.items.length))
-async function api(path, payload) {
-  const response = await fetch(`/api/${path}`, { headers: { 'X-Nreact-Token': token, ...(payload ? { 'Content-Type': 'application/json' } : {}) }, ...(payload ? { method: 'POST', body: JSON.stringify(payload) } : {}) })
-  const data = await response.json()
-  if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`)
-  return data
-}
 function applyConfig(data) { graphSchema.value = data.graph_schema; config.value = data.config; baseline.value = JSON.stringify(data.config); revision.value = data.revision; configPath.value = data.path; source.value = savedSource.value = data.toml; keyStatus.value = data.key_status; key.value = ''; keyAction.value = 'keep' }
 function workflowDocument() {
   if (readOnly.value || sourceDirty.value) throw new Error('Open the working copy and save or reload the TOML draft before saving a workflow.')
@@ -128,7 +127,8 @@ async function exportWorkflow() { await guarded(async () => {
   exported.value = await api('export', { kind: 'workflow', workflow: workflowDocument() }); copyStatus.value = ''
   savedTask.value = task.value; notice.value = 'Workflow exported to .nreact/exports/'
 }) }
-async function guarded(action) { if (busy.value) return; busy.value = true; error.value = ''; notice.value = ''; try { await action() } catch (reason) { error.value = reason.message } finally { busy.value = false; menu.value = '' } }
+let operationEpoch = 0
+async function guarded(action) { if (busy.value) return; operationEpoch++; busy.value = true; error.value = ''; notice.value = ''; try { await action() } catch (reason) { error.value = reason.message } finally { busy.value = false; menu.value = '' } }
 async function loadSavedConfig() { confirmReload.value = false; await guarded(async () => { applyConfig(await api('config')); notice.value = 'Configuration reloaded' }) }
 function reload() { if (dirty.value || sourceDirty.value) { confirmReload.value = true; menu.value = ''; return }; return loadSavedConfig() }
 async function save() { await guarded(async () => {
@@ -182,11 +182,15 @@ function chooseComponent(id) {
     }
   } else selectNode(id)
 }
-async function refreshRuns() { const data = await api('runs'); runs.value = data.runs; activeId.value = data.active }
+let runRevision = null, lastHistoryRefresh = 0
+function applyRunState(data) { activeId.value = data.active; queuedIds.value = data.queued || []; queuePaused.value = !!data.queue_paused; runRevision = data.revision }
+function applyRuns(data) { runs.value = data.runs; applyRunState(data); lastHistoryRefresh = Date.now() }
+async function refreshRuns() { applyRuns(await api('runs')) }
+async function queueControl(action) { await guarded(async () => { await api('queue/control', { action }); await refreshRuns(); notice.value = action === 'pause' ? 'Queue paused. The active run continues.' : 'Queue resumed' }) }
 async function openRun(id) { await guarded(async () => { run.value = await api(`run?id=${id}`); eventIndex.value = run.value.events.length - 1; followLive.value = id === activeId.value; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (currentEvent.value) selected.value = eventNode(currentEvent.value) }) }
 function workingCopy() { run.value = null; eventIndex.value = -1; rightTab.value = 'properties'; selected.value = 'agent' }
 function copyRunTask() { const recordedTask = run.value?.task; workingCopy(); task.value = recordedTask || ''; selectNode('task') }
-async function start(demo = false, singleStep = false) { await guarded(async () => { const data = await api('run', { task: task.value, revision: revision.value, demo, single_step: singleStep, ...(!demo ? { connections: graphStatus.value.connections } : {}) }); activeId.value = data.id; await refreshRuns(); run.value = await api(`run?id=${data.id}`); eventIndex.value = run.value.events.length - 1; followLive.value = true; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false }) }
+async function start(demo = false, singleStep = false, queued = false) { await guarded(async () => { const data = await api('run', { task: task.value, revision: revision.value, demo, single_step: singleStep, queue: queued, ...(!demo ? { connections: graphStatus.value.connections } : {}) }); await refreshRuns(); run.value = await api(`run?id=${data.id}`); eventIndex.value = run.value.events.length - 1; followLive.value = true; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false }) }
 async function control(action) { await guarded(async () => { const id = run.value.id; await api('run/control', { id, action }); await refreshRuns(); run.value = await api(`run?id=${id}`); followLive.value = true; eventIndex.value = run.value.events.length - 1; selected.value = eventNode(currentEvent.value) || selected.value }) }
 function selectEvent(index, openInspector = true) { eventIndex.value = index; followLive.value = false; selected.value = eventNode(currentEvent.value) || 'agent'; rightTab.value = 'event'; if (openInspector) inspectorOpen.value = true; if (compact.value) sidebar.value = false }
 function navigateEvent(delta) { selectEvent(Math.max(0, Math.min(events.value.length - 1, eventIndex.value + delta)), false) }
@@ -215,22 +219,55 @@ function keydown(event) {
   if (event.key === 'ArrowRight' && events.value.length) { event.preventDefault(); navigateEvent(1) }
 }
 function beforeUnload(event) { if (dirty.value || sourceDirty.value || task.value !== savedTask.value) { event.preventDefault(); event.returnValue = '' } }
-let poller, polling = false
+let poller, polling = false, disposed = false, pollFailures = 0
+function schedulePoll(delay = 0) { clearTimeout(poller); if (!disposed) poller = setTimeout(poll, delay) }
+async function poll() {
+  if (disposed) return
+  if (polling || busy.value || document.hidden) { schedulePoll(document.hidden ? 2000 : 500); return }
+  polling = true
+  const epoch = operationEpoch
+  try {
+    if (!config.value) {
+      const data = await api('config')
+      if (epoch !== operationEpoch) return
+      applyConfig(data); error.value = ''
+    }
+    const observedId = run.value?.id
+    const watching = liveStatus(run.value?.status) || run.value?.hasMore
+    const state = await api('runs/state')
+    if (epoch !== operationEpoch) return
+    if (state.revision !== runRevision || (sidebar.value && panel.value === 'history' && Date.now() - lastHistoryRefresh > 15000)) {
+      const history = await api('runs')
+      if (epoch !== operationEpoch) return
+      applyRuns(history)
+    } else applyRunState(state)
+    if (observedId && watching && run.value?.id === observedId) {
+      const offset = run.value.events.length
+      const update = await api('run/updates?id=' + encodeURIComponent(observedId) + '&offset=' + offset)
+      if (run.value?.id === observedId && epoch === operationEpoch) {
+        run.value = mergeRunUpdate(run.value, update)
+        const summary = runs.value.find(item => item.id === observedId)
+        if (summary) Object.assign(summary, { status: run.value.status, steps: run.value.steps, elapsed_seconds: run.value.elapsed_seconds })
+        if (followLive.value) { eventIndex.value = run.value.events.length - 1; selected.value = eventNode(currentEvent.value) || selected.value }
+      }
+    }
+    connectionError.value = ''; pollFailures = 0
+  } catch (reason) {
+    if (epoch === operationEpoch) { connectionError.value = reason.message; pollFailures++ }
+  } finally {
+    polling = false
+    const normalDelay = run.value?.hasMore ? 50 : activeId.value || queuedIds.value.length ? 400 : 2000
+    schedulePoll(pollFailures ? Math.min(8000, 500 * 2 ** Math.min(pollFailures, 4)) : normalDelay)
+  }
+}
+function visible() { if (!document.hidden) schedulePoll() }
 onMounted(async () => {
   await guarded(async () => { applyConfig(await api('config')); await refreshRuns(); if (activeId.value) { run.value = await api(`run?id=${activeId.value}`); eventIndex.value = run.value.events.length - 1 } })
   window.addEventListener('keydown', keydown); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('resize', resizeWorkspace)
-  poller = setInterval(async () => { if (polling || busy.value) return; polling = true; try {
-    if (activeId.value) {
-      const id = activeId.value
-      // Read lifecycle state before the record so a completed run still gets
-      // its final snapshot when refreshRuns clears the active id.
-      await refreshRuns()
-      const data = await api(`run?id=${id}`)
-      if (run.value?.id === id) { run.value = data; if (followLive.value) { eventIndex.value = data.events.length - 1; selected.value = eventNode(currentEvent.value) || selected.value } }
-    }
-  } catch (reason) { error.value = reason.message } finally { polling = false } }, 400)
+  document.addEventListener('visibilitychange', visible)
+  schedulePoll()
 })
-onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown', keydown); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('resize', resizeWorkspace) })
+onUnmounted(() => { disposed = true; clearTimeout(poller); document.removeEventListener('visibilitychange', visible); window.removeEventListener('keydown', keydown); window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('resize', resizeWorkspace) })
 </script>
 
 <template>
@@ -241,7 +278,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
           <div v-if="menu === name" class="dropdown" @click.stop>
             <template v-if="name === 'File'"><button :disabled="readOnly || sourceDirty || busy" @click="showWorkflows('save')">Save workflow…</button><button :disabled="busy" @click="showWorkflows('open')">Open workflow…</button><button :disabled="busy" @click="workflowInput.click(); menu = ''">Import workflow…</button><button :disabled="readOnly || sourceDirty || busy" @click="exportWorkflow">Export workflow</button><button :disabled="readOnly || busy" @click="save"><Save :size="14" /> Save configuration <kbd>Ctrl S</kbd></button><button :disabled="busy" @click="reload"><RotateCcw :size="14" /> Reload from disk</button><button :disabled="busy" @click="exportFile('config')"><Download :size="14" /> Export saved TOML</button><button :disabled="readOnly || busy" @click="exportFile('graph')"><Download :size="14" /> Export working graph</button><button :disabled="!run" @click="exportRun"><Download :size="14" /> Export selected run</button><button :disabled="!run" @click="copyRunTask(); menu = ''">Copy run task to working copy</button><button :disabled="!config || busy" @click="showSettings"><Settings :size="14" /> Settings</button></template>
             <template v-if="name === 'View'"><button @click="sidebar = !sidebar; menu = ''">Toggle component panel</button><button @click="timeline = !timeline; menu = ''">Toggle event timeline</button><button @click="graph?.fit(); menu = ''">Fit graph <kbd>F</kbd></button><button @click="graph?.reset(); menu = ''">Reset node positions</button><button :disabled="readOnly" @click="graph?.restoreConnections(); menu = ''">Restore default connections</button><button @click="showSource(); menu = ''">Open TOML editor</button></template>
-            <template v-if="name === 'Run'"><button :disabled="!canRun" @click="start()">Run saved configuration</button><button :disabled="!!activeId || busy" @click="start(true, true)">Step through offline demo</button><button :disabled="!!activeId || busy" @click="start(true)">Run offline demo</button></template>
+            <template v-if="name === 'Run'"><button :disabled="!canRun" @click="start()">Run saved configuration</button><button :disabled="!canQueue || queuedIds.length >= 32" @click="start(false, false, true)">Queue task</button><button :disabled="busy" @click="queueControl(queuePaused ? 'resume' : 'pause')">{{ queuePaused ? 'Resume queue' : 'Pause queue' }}</button><button :disabled="!!activeId || !!queuedIds.length || busy" @click="start(true, true)">Step through offline demo</button><button :disabled="!!activeId || !!queuedIds.length || busy" @click="start(true)">Run offline demo</button></template>
             <template v-if="name === 'Help'"><button @click="help = true; menu = ''">Workbench guide</button><a href="https://github.com/nya-a-cat/nreact/blob/main/docs/configuration.md" target="_blank" rel="noreferrer">Configuration documentation ↗</a></template>
           </div>
         </div>
@@ -251,10 +288,10 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
         <button class="primary" :title="isActive ? 'Resume the paused run' : runHint" :disabled="isActive ? busy || run.status !== 'paused' : !canRun" @click="isActive ? control('resume') : start()"><Play :size="13" />{{ isActive && run.status === 'paused' ? 'Resume' : 'Run' }}</button>
         <button aria-label="Pause" title="Pause after the current turn" :disabled="!isActive || busy || run.status !== 'running'" @click="control('pause')"><Pause :size="14" /><span>Pause</span></button>
         <button :disabled="isActive ? busy || run.status !== 'paused' : !canRun" title="Execute one complete ReAct turn" @click="isActive ? control('step') : start(false, true)"><StepForward :size="15" />Step</button>
-        <button aria-label="Stop" title="Stop execution" :disabled="!isActive || busy || run.status === 'cancelling'" @click="control('cancel')"><Square :size="12" /><span>Stop</span></button>
+        <button aria-label="Stop" :title="run?.status === 'queued' ? 'Remove this queued task without executing it' : 'Stop execution and pause pending tasks'" :disabled="(!isActive && run?.status !== 'queued') || busy || run?.status === 'cancelling'" @click="control('cancel')"><Square :size="12" /><span>Stop</span></button>
       </div>
     </header>
-    <div v-if="error" class="message error" role="alert">{{ error }}<button aria-label="Dismiss error" @click="error = ''"><X :size="15" /></button></div>
+    <div v-if="error || connectionError" class="message error" role="alert">{{ error || connectionError }}<button aria-label="Dismiss error" @click="error = ''; connectionError = ''"><X :size="15" /></button></div>
     <main v-if="config" class="workspace" :class="{ 'sidebar-hidden': !sidebar, 'timeline-hidden': !timeline, 'inspector-hidden': !inspectorOpen }">
       <aside class="icon-rail" aria-label="Workspace panels"><button v-for="item in [{ id: 'components', icon: Blocks, label: 'Components' }, { id: 'layers', icon: Layers, label: 'Layers' }, { id: 'history', icon: History, label: 'Run history' }]" :key="item.id" :class="{ active: sidebar && panel === item.id }" :title="item.label" :aria-label="item.label" @click="togglePanel(item.id)"><component :is="item.icon" :size="18" /></button><button title="TOML source" aria-label="TOML source" :class="{ active: rightTab === 'source' }" @click="showSource"><Code :size="18" /></button><button title="Toggle inspector" aria-label="Toggle inspector" :class="{ active: inspectorOpen }" @click="inspectorOpen = !inspectorOpen; if (narrow) sidebar = false"><SlidersHorizontal :size="18" /></button><div class="rail-spacer"></div><button title="Settings" aria-label="Settings" :class="{ active: settingsOpen }" @click="showSettings"><Settings :size="18" /></button><button title="Workbench guide" aria-label="Workbench guide" @click="help = true"><CircleHelp :size="18" /></button></aside>
       <aside v-if="sidebar" class="library">
@@ -262,7 +299,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
         <template v-if="panel === 'components'">
           <div class="search-field"><Search :size="14" /><input v-model="search" aria-label="Search components" placeholder="Search components…" /></div>
           <div class="library-groups"><section v-for="group in filteredGroups" :key="group.title"><h2>{{ group.title }}</h2><button v-for="item in group.items" :key="item.id" class="component-item" :class="{ chosen: selected === item.id }" @click="chooseComponent(item.id)"><component :is="item.icon" :size="16" /><span><strong>{{ item.name }}</strong><small>{{ item.detail }}</small></span><Plus v-if="group.title === 'Tools'" :size="12" /></button></section><p v-if="!filteredGroups.length" class="muted pad">No matching components.</p></div>
-          <div class="library-footer"><span class="eyebrow">LOCAL WORKSPACE</span><p>Connect a model, configure tools, then follow each turn.</p><button class="outline" :disabled="!!activeId || busy" @click="start(true, true)"><StepForward :size="14" /> Try offline demo</button><small>Scripted model · fictional pages</small></div>
+          <div class="library-footer"><span class="eyebrow">LOCAL WORKSPACE</span><p>Connect a model, configure tools, then follow each turn.</p><button class="outline" :disabled="!!activeId || !!queuedIds.length || busy" @click="start(true, true)"><StepForward :size="14" /> Try offline demo</button><small>Scripted model · fictional pages</small></div>
         </template>
         <template v-if="panel === 'layers'"><p class="muted pad">Show construction inputs and the run result.</p><label v-for="(_, name) in layers" :key="name" class="layer-switch"><input v-model="layers[name]" type="checkbox" /><i :class="name"></i>{{ name === 'config' ? 'Construction inputs' : 'Run result' }}</label><div class="pad"><button class="outline" @click="graph?.reset()"><RotateCcw :size="14" /> Reset layout</button></div></template>
         <template v-if="panel === 'history'"><div class="history-actions"><button class="outline" @click="workingCopy"><ArrowLeft :size="13" /> Working copy</button><button title="Refresh history" aria-label="Refresh history" @click="guarded(refreshRuns)"><RotateCcw :size="14" /></button></div><div class="run-list"><button v-for="item in runs" :key="item.id" :class="{ chosen: run?.id === item.id }" @click="openRun(item.id)"><span class="run-list-title">{{ item.demo ? 'Offline demo' : item.model }}</span><p>{{ item.task }}</p><small>{{ item.status }} · {{ item.steps }} turns</small><time>{{ new Date(item.started_at).toLocaleString() }}</time></button><p v-if="!runs.length" class="muted pad">Runs appear here after execution. Completed traces remain available after restarting.</p></div></template>
@@ -272,9 +309,9 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
         <GraphCanvas ref="graph" :config="displayed" :task="run?.task || task" :result="run?.result" :schema="graphSchema" :edit-locked="sourceDirty || busy" @edit="editNode" :event="currentEvent" :selected="selected" :layers="layers" :storage-key="configPath" :read-only="readOnly" @select="selectNode" @ready="graphStatus = $event" />
         <section v-if="timeline" class="trace-panel">
           <header class="trace-heading"><div class="trace-tabs"><button :class="{ active: bottomTab === 'events' }" @click="bottomTab = 'events'"><History :size="13" /> Events <span>{{ events.length }}</span></button><button :class="{ active: bottomTab === 'result' }" @click="bottomTab = 'result'"><Terminal :size="13" /> Result</button></div><div class="trace-nav"><button :disabled="eventIndex <= 0" aria-label="Previous event" title="Previous recorded event (←)" @click="navigateEvent(-1)"><ChevronLeft :size="16" /></button><span>{{ events.length ? eventIndex + 1 : 0 }} / {{ events.length }}</span><button :disabled="eventIndex >= events.length - 1" aria-label="Next event" title="Next recorded event (→)" @click="navigateEvent(1)"><ChevronRight :size="16" /></button><button :class="{ active: followLive && isActive }" :disabled="!events.length" @click="followLive = true; eventIndex = events.length - 1; selected = eventNode(currentEvent); rightTab = 'event'">Latest</button><button :disabled="!run" title="Export run JSON" aria-label="Export run" @click="exportRun"><Download :size="14" /></button></div></header>
-          <div v-if="!run" class="trace-empty"><Terminal :size="23" /><div><strong>Ready to inspect a run</strong><p>Enter a task in the Task node, or step through the offline demo.</p></div><button :disabled="!!activeId || busy" @click="start(true, true)">Open demo <StepForward :size="14" /></button></div>
-          <div v-else-if="bottomTab === 'events'" ref="eventList" class="event-list"><div class="event-columns"><span>TURN</span><span>EVENT</span><span>CONTENT</span><span>ELAPSED</span></div><button v-for="(event, index) in events" :key="index" :class="{ chosen: eventIndex === index }" @click="selectEvent(index)"><span class="mono">{{ String(event.step).padStart(2, '0') }}</span><span class="event-kind" :class="event.kind">{{ event.kind === 'observation' ? 'observation' : event.tool || event.kind }}</span><span class="event-text">{{ event.text }}</span><span class="mono muted">{{ event.elapsed_seconds.toFixed(3) }}s</span></button><p v-if="!events.length" class="muted pad">Waiting for the first model response…</p></div>
-          <div v-else class="result-output"><p v-if="run.error" class="error-text">{{ run.error }}</p><pre>{{ run.result?.answer || (isActive ? 'Execution in progress…' : 'This run ended without a final answer.') }}</pre><div v-if="run.result" class="result-stats">{{ run.result.model_calls }} model calls · {{ run.result.steps }} turns · {{ run.elapsed_seconds.toFixed(3) }}s <span v-if="Object.keys(run.result.usage).length">· {{ JSON.stringify(run.result.usage) }}</span></div><p v-if="run.storage_error" class="error-text">{{ run.storage_error }}</p></div>
+          <div v-if="!run" class="trace-empty"><Terminal :size="23" /><div><strong>Ready to inspect a run</strong><p>Enter a task in the Task node, or step through the offline demo.</p></div><button :disabled="!!activeId || !!queuedIds.length || busy" @click="start(true, true)">Open demo <StepForward :size="14" /></button></div>
+          <div v-else-if="bottomTab === 'events'" ref="eventList" class="event-list"><div class="event-columns"><span>TURN</span><span>EVENT</span><span>CONTENT</span><span>ELAPSED</span></div><button v-for="(event, index) in events" :key="index" :class="{ chosen: eventIndex === index }" @click="selectEvent(index)"><span class="mono">{{ String(event.step).padStart(2, '0') }}</span><span class="event-kind" :class="event.kind">{{ event.kind === 'observation' ? 'observation' : event.tool || event.kind }}</span><span class="event-text">{{ eventPreview(event.text) }}</span><span class="mono muted">{{ event.elapsed_seconds.toFixed(3) }}s</span></button><p v-if="!events.length" class="muted pad">{{ run.status === 'queued' ? 'Queued — waiting for preceding tasks or Resume queue.' : 'Waiting for the first model response…' }}</p></div>
+          <div v-else class="result-output"><p v-if="run.error" class="error-text">{{ run.error }}</p><pre>{{ run.result?.answer || (run.status === 'queued' ? 'Queued — no model or tool has executed.' : isActive ? 'Execution in progress…' : 'This run ended without a final answer.') }}</pre><div v-if="run.result" class="result-stats">{{ run.result.model_calls }} model calls · {{ run.result.steps }} turns · {{ run.elapsed_seconds.toFixed(3) }}s <span v-if="Object.keys(run.result.usage).length">· {{ JSON.stringify(run.result.usage) }}</span></div><p v-if="run.storage_error" class="error-text">{{ run.storage_error }}</p></div>
         </section>
       </section>
       <div v-if="(compact && sidebar) || (narrow && inspectorOpen)" class="panel-backdrop" @click="sidebar = false; if (narrow) inspectorOpen = false"></div><aside v-if="inspectorOpen" class="inspector">
@@ -298,7 +335,7 @@ onUnmounted(() => { clearInterval(poller); window.removeEventListener('keydown',
       </aside>
     </main>
     <div v-else class="loading">{{ error ? 'Configuration could not be loaded.' : 'Opening workspace…' }}<button v-if="error" @click="reload">Retry</button></div>
-    <footer class="statusbar"><span class="status-dot" :class="{ live: isActive }"></span><strong>{{ status }}</strong><span class="status-message">{{ isActive && run.status === 'pausing' ? 'Finishing the current turn…' : isActive && run.status === 'cancelling' ? 'Waiting for the in-flight call to return…' : notice || (!run ? runHint : '') }}</span><span class="status-shortcuts">Ctrl S Save · F Fit · ← → Inspect</span><span>Python / local</span></footer>
+    <footer class="statusbar"><span class="status-dot" :class="{ live: isActive }"></span><strong>{{ status }}</strong><span class="status-message">{{ isActive && run.status === 'pausing' ? 'Finishing the current turn…' : isActive && run.status === 'cancelling' ? 'Waiting for the in-flight call to return…' : notice || (!run ? runHint : '') }}</span><span v-if="queuedIds.length || queuePaused" aria-label="Queue status">Queue: {{ queuedIds.length }}{{ queuePaused ? ' · paused' : '' }}</span><span class="status-shortcuts">Ctrl S Save · F Fit · ← → Inspect</span><span>Python / local</span></footer>
     <input ref="workflowInput" type="file" accept="application/json,.json" aria-label="Import workflow file" hidden @change="importWorkflow" />
     <WorkflowDialog v-if="workflowMode" :mode="workflowMode" :name="workflowName" :records="workflowRecords" :selected="workflowSelected" :preview="workflowPreview" :busy="busy" :error="error" :replacing="workflowReplacing" :truncated="workflowTruncated" @name="workflowName = $event" @select="workflowSelected = $event" @close="workflowMode = ''" @save="saveWorkflow" @open="openWorkflow" @preview-delete="workflowMode = 'delete'" @delete="deleteWorkflow" @apply="applyWorkflow" />
     <SettingsDialog v-if="settingsOpen && config" :theme="config.ui.theme" :config-name="configName" :busy="busy" :toml-dirty="sourceDirty" :error="settingsError" :notice="settingsNotice" @theme="changeTheme" @close="settingsOpen = false" />
