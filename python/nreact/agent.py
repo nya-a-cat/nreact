@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -78,7 +79,10 @@ class Agent:
         usage: dict[str, int] = {}
         calls = 0
         status, answer, error, reward = "max_steps", None, None, None
-        trace = Path(trace_path).open("x", encoding="utf-8") if trace_path else None
+        trace = None
+        if trace_path:
+            descriptor = os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            trace = os.fdopen(descriptor, "w", encoding="utf-8", newline="\n")
 
         def write(record: dict) -> None:
             if trace:
@@ -88,7 +92,8 @@ class Agent:
         def emit(kind: str, text: str, tool: str | None = None) -> None:
             event = Event(kind, session.steps, text, tool)
             events.append(event)
-            write({"type": "event", **asdict(event)})
+            write({"type": "event", **asdict(event),
+                   "elapsed_seconds": round(time.monotonic() - started, 4)})
             if on_event:
                 on_event(event)
 
@@ -102,8 +107,18 @@ class Agent:
                 "model_parameters": (self.model.trace_metadata() if isinstance(self.model, (ChatModel, ChatGPTModel)) else {}),
                 "prompt_sha256": hashlib.sha256(prefix.encode()).hexdigest(),
             })
-            self.environment.reset()
-            while session.steps < self.max_steps and not session.done:
+            ready = True
+            try:
+                if control:
+                    control.check_cancelled()
+                self.environment.reset()
+            except RunCancelled:
+                ready, status = False, "cancelled"
+            except Exception as exc:
+                ready, status = False, "environment_error"
+                error = f"Environment reset failed ({type(exc).__name__})."
+                emit("error", error)
+            while ready and session.steps < self.max_steps and not session.done:
                 if control:
                     try:
                         control.before_turn()
@@ -156,15 +171,15 @@ class Agent:
                 if kind == "thought":
                     continue
                 emit("action", argument, name)
-                if kind == "finish":
-                    status, answer = "finished", argument
-                    break
                 if control:
                     try:
                         control.check_cancelled()
                     except RunCancelled:
                         status = "cancelled"
                         break
+                if kind == "finish":
+                    status, answer = "finished", argument
+                    break
                 try:
                     observation = self.environment.step(name, argument)
                     if not isinstance(observation.text, str):
@@ -181,6 +196,13 @@ class Agent:
                     reward = observation.reward
                 if observation.done:
                     status, answer = "environment_done", observation.answer
+            # Cancellation also applies at the last turn or a terminal tool return.
+            # The observation is retained because the tool has already executed.
+            if control:
+                try:
+                    control.check_cancelled()
+                except RunCancelled:
+                    status, answer = "cancelled", None
             result = Result(status, answer, session.steps, calls, usage, events,
                             time.monotonic() - started, error, reward)
             write({"type": "result", **result.to_dict()})
