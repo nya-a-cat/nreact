@@ -17,3 +17,6 @@ openai-auth.json
 openai-auth.json.lock
 web/node_modules/
 web/.vite/
+
+browser-artifacts/
+offline-debug/

@@ -12,12 +12,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
       - uses: pnpm/action-setup@v4
         with:
           version: '11.19.0'
       - run: pnpm install --frozen-lockfile --ignore-scripts
         working-directory: web
       - run: pnpm build
+        working-directory: web
+      - run: pnpm test
         working-directory: web
       - run: git diff --exit-code -- python/nreact/web_static
   test:

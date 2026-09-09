@@ -59,6 +59,8 @@ The graph binds backend-defined ChatModel, ConfiguredEnvironment, Task, Agent an
 
 Completed runs persist beside the configuration in `.nreact/runs/`. Configuration snapshots omit API keys; task and tool content remains in the trace. See the [workbench guide](docs/workbench.md) for controls and storage details.
 
+Use **File → Save workflow** to keep model and tool settings, the task and canvas together. Open saved workflows or import a workflow JSON file, review the configuration, then save before running. Node moves, layout resets and connections support undo/redo; run snapshots keep the working layout intact. See [Workflows](docs/workflows.md) for storage, portability and credential handling.
+
 ### Python API
 
 Set `NREACT_MODEL` and `NREACT_BASE_URL` for your model endpoint, plus `NREACT_API_KEY` if required. See [model configuration](docs/usage.md) for examples.
@@ -139,11 +141,21 @@ The installed Python package includes the compiled interface and local fonts. To
 cd web
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm build
+pnpm test
 ```
 
 For development, keep `uv run nreact ui --no-browser` running from the repository root and run `pnpm dev` in `web/`. Vite proxies the local API. Rebuild the assets before packaging with `uv build`.
 
 Python 3.10 uses the `tomli` compatibility package.
+
+Browser regressions run against the packaged interface with Chromium and the real local HTTP server. To run them locally:
+
+```sh
+uv run --with playwright==1.57.0 python -m playwright install chromium
+uv run --with playwright==1.57.0 python -m unittest discover -s tests/browser -v
+```
+
+The browser CI job retains screenshots, console output and Playwright traces for 14 days. Its tests use isolated temporary configurations and scripted models.
 
 ## Citation
 
