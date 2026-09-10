@@ -1,9 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { workflow, eventNode, toolRows } from '../src/graph.js'
-const schema = JSON.parse(execFileSync(process.env.PYTHON || 'python', ['-c', 'import json; from nreact.graph import GRAPH_SCHEMA; print(json.dumps(GRAPH_SCHEMA))'], { cwd: new URL('../../', import.meta.url), encoding: 'utf8', env: { ...process.env, PYTHONPATH: fileURLToPath(new URL('../../python', import.meta.url)) } }))
+const projectPython = fileURLToPath(new URL(process.platform === 'win32' ? '../../.venv/Scripts/python.exe' : '../../.venv/bin/python', import.meta.url))
+const python = process.env.PYTHON || (existsSync(projectPython) ? projectPython : 'python')
+const schema = JSON.parse(execFileSync(python, ['-c', 'import json; from nreact.graph import GRAPH_SCHEMA; print(json.dumps(GRAPH_SCHEMA))'], { cwd: new URL('../../', import.meta.url), encoding: 'utf8', env: { ...process.env, PYTHONPATH: fileURLToPath(new URL('../../python', import.meta.url)) } }))
 const config = { model: { name: '', temperature: 0, max_tokens: 512 }, agent: { mode: 'dense', max_steps: 20, max_context_chars: 100000, max_observation_chars: 12000 }, tools: { wikipedia: true, workspace: '', custom: [] } }
 
 test('every connection joins compatible output and input ports', () => {

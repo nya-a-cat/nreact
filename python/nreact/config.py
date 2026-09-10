@@ -240,24 +240,26 @@ def dumps_config(config: Config) -> str:
 
 
 def save_config(config: Config, *, overwrite: bool = False) -> None:
-    """Write a complete config; overwrites use atomic replacement and mode 0600."""
+    """Publish a complete, synced config; exclusive creation protects existing files."""
     text = dumps_config(config)
     path = config.path
     if path.is_symlink():
         raise ValueError("Saving through a configuration symlink is unsupported.")
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if not overwrite:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as writer:
-            writer.write(text)
-        return
     descriptor, temporary = tempfile.mkstemp(prefix=".nreact-", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as writer:
             writer.write(text)
             writer.flush()
             os.fsync(writer.fileno())
-        os.replace(temporary, path)
+        if overwrite:
+            os.replace(temporary, path)
+        elif os.name == "nt":
+            # Windows rename refuses an existing destination.
+            os.rename(temporary, path)
+        else:
+            # POSIX rename replaces existing files; link publishes exclusively.
+            os.link(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
 

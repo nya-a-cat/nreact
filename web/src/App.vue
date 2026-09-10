@@ -171,7 +171,7 @@ function resizeWorkspace() { const nextCompact = window.innerWidth < 1250, nextN
 function chooseComponent(id) {
   if (['wikipedia', 'workspace', 'custom'].includes(id)) {
     selectNode('tools')
-    if (readOnly.value || sourceDirty.value) return
+    if (readOnly.value || sourceDirty.value || busy.value) return
     if (id === 'wikipedia') config.value.tools.wikipedia = true
     if (id === 'workspace' && !config.value.tools.workspace) config.value.tools.workspace = '.'
     if (id === 'custom') {
@@ -187,11 +187,37 @@ function applyRunState(data) { activeId.value = data.active; queuedIds.value = d
 function applyRuns(data) { runs.value = data.runs; applyRunState(data); lastHistoryRefresh = Date.now() }
 async function refreshRuns() { applyRuns(await api('runs')) }
 async function queueControl(action) { await guarded(async () => { await api('queue/control', { action }); await refreshRuns(); notice.value = action === 'pause' ? 'Queue paused. The active run continues.' : 'Queue resumed' }) }
-async function openRun(id) { await guarded(async () => { run.value = await api(`run?id=${id}`); eventIndex.value = run.value.events.length - 1; followLive.value = id === activeId.value; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (currentEvent.value) selected.value = eventNode(currentEvent.value) }) }
-function workingCopy() { run.value = null; eventIndex.value = -1; rightTab.value = 'properties'; selected.value = 'agent' }
+// Returning to the working copy invalidates pending requests that select a run.
+let viewEpoch = 0
+async function readSelectedRun(id, epoch) {
+  const record = await api(`run?id=${encodeURIComponent(id)}`)
+  if (epoch !== viewEpoch) return false
+  run.value = record; eventIndex.value = record.events.length - 1
+  return true
+}
+async function openRun(id) { await guarded(async () => {
+  if (!await readSelectedRun(id, ++viewEpoch)) return
+  followLive.value = id === activeId.value; rightTab.value = 'event'; timeline.value = true
+  if (compact.value) sidebar.value = false
+  if (currentEvent.value) selected.value = eventNode(currentEvent.value)
+}) }
+function workingCopy() { viewEpoch++; run.value = null; eventIndex.value = -1; rightTab.value = 'properties'; selected.value = 'agent' }
 function copyRunTask() { const recordedTask = run.value?.task; workingCopy(); task.value = recordedTask || ''; selectNode('task') }
-async function start(demo = false, singleStep = false, queued = false) { await guarded(async () => { const data = await api('run', { task: task.value, revision: revision.value, demo, single_step: singleStep, queue: queued, ...(!demo ? { connections: graphStatus.value.connections } : {}) }); await refreshRuns(); run.value = await api(`run?id=${data.id}`); eventIndex.value = run.value.events.length - 1; followLive.value = true; rightTab.value = 'event'; timeline.value = true; if (compact.value) sidebar.value = false; if (narrow.value) inspectorOpen.value = false }) }
-async function control(action) { await guarded(async () => { const id = run.value.id; await api('run/control', { id, action }); await refreshRuns(); run.value = await api(`run?id=${id}`); followLive.value = true; eventIndex.value = run.value.events.length - 1; selected.value = eventNode(currentEvent.value) || selected.value }) }
+async function start(demo = false, singleStep = false, queued = false) { await guarded(async () => {
+  const epoch = ++viewEpoch
+  const data = await api('run', { task: task.value, revision: revision.value, demo, single_step: singleStep, queue: queued, ...(!demo ? { connections: graphStatus.value.connections } : {}) })
+  await refreshRuns()
+  if (!await readSelectedRun(data.id, epoch)) return
+  followLive.value = true; rightTab.value = 'event'; timeline.value = true
+  if (compact.value) sidebar.value = false
+  if (narrow.value) inspectorOpen.value = false
+}) }
+async function control(action) { await guarded(async () => {
+  const epoch = ++viewEpoch, id = run.value.id
+  await api('run/control', { id, action }); await refreshRuns()
+  if (!await readSelectedRun(id, epoch)) return
+  followLive.value = true; selected.value = eventNode(currentEvent.value) || selected.value
+}) }
 function selectEvent(index, openInspector = true) { eventIndex.value = index; followLive.value = false; selected.value = eventNode(currentEvent.value) || 'agent'; rightTab.value = 'event'; if (openInspector) inspectorOpen.value = true; if (compact.value) sidebar.value = false }
 function navigateEvent(delta) { selectEvent(Math.max(0, Math.min(events.value.length - 1, eventIndex.value + delta)), false) }
 async function exportFile(kind) { await guarded(async () => { exported.value = await api('export', { kind, ...(kind === 'run' ? { id: run.value.id } : kind === 'graph' ? { graph: graph.value.document() } : {}) }); copyStatus.value = ''; notice.value = 'Export saved to .nreact/exports/' }) }
@@ -262,7 +288,7 @@ async function poll() {
 }
 function visible() { if (!document.hidden) schedulePoll() }
 onMounted(async () => {
-  await guarded(async () => { applyConfig(await api('config')); await refreshRuns(); if (activeId.value) { run.value = await api(`run?id=${activeId.value}`); eventIndex.value = run.value.events.length - 1 } })
+  await guarded(async () => { const epoch = viewEpoch; applyConfig(await api('config')); await refreshRuns(); if (activeId.value) await readSelectedRun(activeId.value, epoch) })
   window.addEventListener('keydown', keydown); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('resize', resizeWorkspace)
   document.addEventListener('visibilitychange', visible)
   schedulePoll()
@@ -298,7 +324,7 @@ onUnmounted(() => { disposed = true; clearTimeout(poller); document.removeEventL
         <header class="panel-heading"><span>{{ panel === 'components' ? 'Components' : panel === 'layers' ? 'Graph layers' : 'Run history' }}</span><button aria-label="Hide side panel" @click="sidebar = false"><X :size="13" /></button></header>
         <template v-if="panel === 'components'">
           <div class="search-field"><Search :size="14" /><input v-model="search" aria-label="Search components" placeholder="Search components…" /></div>
-          <div class="library-groups"><section v-for="group in filteredGroups" :key="group.title"><h2>{{ group.title }}</h2><button v-for="item in group.items" :key="item.id" class="component-item" :class="{ chosen: selected === item.id }" @click="chooseComponent(item.id)"><component :is="item.icon" :size="16" /><span><strong>{{ item.name }}</strong><small>{{ item.detail }}</small></span><Plus v-if="group.title === 'Tools'" :size="12" /></button></section><p v-if="!filteredGroups.length" class="muted pad">No matching components.</p></div>
+          <div class="library-groups"><section v-for="group in filteredGroups" :key="group.title"><h2>{{ group.title }}</h2><button v-for="item in group.items" :key="item.id" class="component-item" :class="{ chosen: selected === item.id }" :disabled="busy && group.title === 'Tools'" @click="chooseComponent(item.id)"><component :is="item.icon" :size="16" /><span><strong>{{ item.name }}</strong><small>{{ item.detail }}</small></span><Plus v-if="group.title === 'Tools'" :size="12" /></button></section><p v-if="!filteredGroups.length" class="muted pad">No matching components.</p></div>
           <div class="library-footer"><span class="eyebrow">LOCAL WORKSPACE</span><p>Connect a model, configure tools, then follow each turn.</p><button class="outline" :disabled="!!activeId || !!queuedIds.length || busy" @click="start(true, true)"><StepForward :size="14" /> Try offline demo</button><small>Scripted model · fictional pages</small></div>
         </template>
         <template v-if="panel === 'layers'"><p class="muted pad">Show construction inputs and the run result.</p><label v-for="(_, name) in layers" :key="name" class="layer-switch"><input v-model="layers[name]" type="checkbox" /><i :class="name"></i>{{ name === 'config' ? 'Construction inputs' : 'Run result' }}</label><div class="pad"><button class="outline" @click="graph?.reset()"><RotateCcw :size="14" /> Reset layout</button></div></template>

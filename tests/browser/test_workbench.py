@@ -3,6 +3,7 @@
 Install development tools with ``pip install playwright==1.57.0`` and
 ``python -m playwright install chromium``, then run
 ``python -m unittest discover -s tests/browser -v``.
+Set NREACT_BROWSER_CHANNEL=msedge or chrome to use an installed browser instead.
 Only scripted demo models are used; no external model requests are made.
 """
 
@@ -26,7 +27,7 @@ class WorkbenchBrowserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.playwright = sync_playwright().start()
-        cls.browser = cls.playwright.chromium.launch()
+        cls.browser = cls.playwright.chromium.launch(channel=os.environ.get("NREACT_BROWSER_CHANNEL") or None)
 
     @classmethod
     def tearDownClass(cls):
@@ -446,6 +447,69 @@ class WorkbenchBrowserTests(unittest.TestCase):
             pass
         expect(self.page.locator('.snapshot-label')).to_have_count(0)
         expect(self.page.get_by_role('textbox', name='task', exact=True)).to_have_value('Working during execution')
+
+    def keep_working_copy_after_pending_read(self, action, expected_task='Keep this working task'):
+        pending = []
+        pattern = re.compile(r'/api/run\?id=')
+        self.page.route(pattern, lambda route: pending.append(route))
+        with self.page.expect_request(pattern):
+            action()
+        self.page.locator('.document-tab').click()
+        self.assertEqual(len(pending), 1)
+        pending[0].fulfill(response=pending[0].fetch())
+        self.page.unroute(pattern)
+        expect(self.page.get_by_role('textbox', name='task', exact=True)).to_be_editable()
+        expect(self.page.locator('.workspace-tabs')).to_contain_text('Agent graph')
+        expect(self.page.locator('.workspace-tabs')).not_to_contain_text('read only')
+        expect(self.page.get_by_role('textbox', name='task', exact=True)).to_have_value(expected_task)
+
+    def test_late_initial_read_respects_return_to_working_copy(self):
+        self.demo(step=True)
+        self.keep_working_copy_after_pending_read(lambda: self.page.reload(), expected_task='')
+
+    def test_late_history_read_respects_return_to_working_copy(self):
+        self.page.get_by_role('textbox', name='task', exact=True).fill('Keep this working task')
+        self.demo(step=True)
+        self.page.locator('.document-tab').click()
+        self.keep_working_copy_after_pending_read(
+            lambda: self.page.get_by_role('button', name='Return to active run', exact=True).click())
+
+    def test_late_start_read_respects_return_to_working_copy(self):
+        self.page.get_by_role('textbox', name='task', exact=True).fill('Keep this working task')
+        self.keep_working_copy_after_pending_read(lambda: self.menu('Run', 'Step through offline demo'))
+        self.assertIsNotNone(self.server.app.runs.active)
+        self.assertEqual(len(self.server.app.runs.list()['runs']), 1)
+
+    def test_late_control_read_respects_return_to_working_copy(self):
+        self.page.get_by_role('textbox', name='task', exact=True).fill('Keep this working task')
+        self.demo(step=True)
+        self.keep_working_copy_after_pending_read(
+            lambda: self.page.locator('.top-actions').get_by_role('button', name='Step', exact=True).click())
+        record = self.server.app.runs.snapshot(self.server.app.runs.active)
+        self.assertEqual(record['steps'], 2)
+        self.assertEqual(len(record['events']), 6)
+
+    def test_component_edits_are_locked_until_config_save_finishes(self):
+        pending = []
+        self.page.get_by_role('textbox', name='model.name', exact=True).fill('saved-fixture')
+        self.page.route('**/api/config', lambda route: pending.append(route))
+        self.page.get_by_role('button', name='Save configuration', exact=True).click()
+        self.page.get_by_role('button', name='Components', exact=True).click()
+        component = self.page.locator('.component-item').filter(has_text='Python function')
+        try:
+            expect(component).to_be_disabled()
+            self.assertEqual(len(pending), 1)
+        finally:
+            for route in pending:
+                route.fulfill(response=route.fetch())
+            self.page.unroute('**/api/config')
+        expect(component).to_be_enabled()
+        component.click()
+        expect(self.page.get_by_label('Callable', exact=True)).to_have_count(1)
+        expect(self.page.locator('.statusbar strong')).to_have_text('Unsaved changes')
+        saved = self.server.app.snapshot()['config']
+        self.assertEqual(saved['model']['name'], 'saved-fixture')
+        self.assertEqual(saved['tools']['custom'], [])
 
 
 if __name__ == "__main__":

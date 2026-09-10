@@ -92,6 +92,62 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 load_config(Path(directory) / "missing.toml")
 
+    def test_failed_first_save_leaves_no_partial_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nreact.toml"
+            config = parse_config({}, path, use_environment=False)
+            fdopen = os.fdopen
+
+            def failing_writer(*args, **kwargs):
+                writer = fdopen(*args, **kwargs)
+                write = writer.write
+
+                def fail(text):
+                    write(text[:15])
+                    writer.flush()
+                    raise OSError("disk full")
+
+                writer.write = fail
+                return writer
+
+            with patch("nreact.config.os.fdopen", side_effect=failing_writer):
+                with self.assertRaises(OSError):
+                    save_config(config)
+            self.assertFalse(path.exists())
+            self.assertEqual(list(path.parent.glob(".nreact-*.tmp")), [])
+            save_config(config)
+            self.assertEqual(load_config(path).to_dict(), config.to_dict())
+
+    def test_sync_failure_preserves_missing_or_previous_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nreact.toml"
+            config = parse_config({}, path, use_environment=False)
+            for overwrite in (False, True):
+                if overwrite:
+                    save_config(config)
+                before = path.read_bytes() if path.exists() else None
+                with self.subTest(overwrite=overwrite), patch("nreact.config.os.fsync", side_effect=OSError("disk full")):
+                    with self.assertRaises(OSError):
+                        save_config(config, overwrite=overwrite)
+                self.assertEqual(path.read_bytes() if path.exists() else None, before)
+                self.assertEqual(list(path.parent.glob(".nreact-*.tmp")), [])
+
+    def test_initial_publish_does_not_replace_a_concurrent_creator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nreact.toml"
+            config = parse_config({}, path, use_environment=False)
+            newer = b'[model]\nname = "concurrent"\n'
+
+            def create_before_publish(descriptor):
+                self.assertFalse(path.exists())
+                path.write_bytes(newer)
+
+            with patch("nreact.config.os.fsync", side_effect=create_before_publish):
+                with self.assertRaises(FileExistsError):
+                    save_config(config)
+            self.assertEqual(path.read_bytes(), newer)
+            self.assertEqual(list(path.parent.glob(".nreact-*.tmp")), [])
+
     def test_local_tool_loads_only_at_runtime_and_uses_config_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

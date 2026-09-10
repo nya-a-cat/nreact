@@ -146,6 +146,8 @@ pnpm test
 
 For development, keep `uv run nreact ui --no-browser` running from the repository root and run `pnpm dev` in `web/`. Vite proxies the local API. Rebuild the assets before packaging with `uv build`.
 
+Frontend tests use the project's `.venv` Python when present. Set `PYTHON` to select a different interpreter.
+
 Python 3.10 uses the `tomli` compatibility package.
 
 Browser regressions run against the packaged interface with Chromium and the real local HTTP server. To run them locally:
@@ -155,7 +157,7 @@ uv run --with playwright==1.57.0 python -m playwright install chromium
 uv run --with playwright==1.57.0 python -m unittest discover -s tests/browser -v
 ```
 
-The browser CI job retains screenshots, console output and Playwright traces for 14 days. Its tests use isolated temporary configurations and scripted models.
+Set `NREACT_BROWSER_CHANNEL=msedge` or `chrome` to run with an installed browser. The browser CI job retains screenshots, console output and Playwright traces for 14 days. Its tests use isolated temporary configurations and scripted models.
 
 ## Citation
 
